@@ -161,6 +161,57 @@ pwsh -NoProfile -File .\note.ps1 unresolved
 pwsh -NoProfile -File .\note.ps1 create-unresolved all
 ```
 
+## Roadmap
+
+### Phase 1: Metadata-aware workflows
+
+Focus: turn frontmatter into day-to-day utility.
+
+- `agenda` driven by fields like `due`, `scheduled`, `status`, and `priority`
+- smarter `tasks` that include note context such as project, status, and priority
+- better `props` support, including `unset`, clearer list editing, and stronger validation
+- note templates for common frontmatter and note shapes
+- weekly and monthly note workflows built on top of the existing daily note model
+
+### Phase 2: Retrieval and structure
+
+Focus: make the vault easier to navigate as it grows.
+
+- `related <note>` suggestions from links, tags, aliases, and text overlap
+- stricter orphan and stale-note views
+- local note maps or Mermaid graph export
+- saved queries and richer search filters that combine text, tags, props, and task state
+- dashboards that summarize recent notes, tasks, unresolved links, and due items
+
+### Phase 3: Refactoring tools
+
+Focus: help reorganize a growing vault safely.
+
+- merge two notes and rewrite incoming links
+- split sections into new linked notes
+- repair broken or ambiguous links with suggestions
+- dedupe near-duplicate notes by title or content similarity
+- extend `rename` to handle more path-move and alias-update cases
+
+### Phase 4: Architecture and polish
+
+Focus: keep the codebase maintainable as features expand.
+
+- split the project into a reusable PowerShell module plus a thin CLI wrapper
+- add deeper parsing and unit tests alongside the current smoke tests
+- introduce a config file for vault defaults, editor, templates, and display preferences
+- improve performance for larger vaults, potentially with an optional lightweight index
+
+### Suggested next build order
+
+1. `agenda`
+2. metadata-aware `tasks`
+3. templates
+4. module refactor
+5. dashboards or reports
+6. related/graph tooling
+7. merge/split/repair refactoring commands
+
 ## Testing
 
 Run the local test suite:
