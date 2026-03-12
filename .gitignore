@@ -1,0 +1,18 @@
+# Private note content
+vault/**
+!vault/.gitkeep
+
+# Local PowerShell/editor noise
+*.tmp
+*.log
+*.bak
+*.swp
+*.orig
+
+# OS junk
+Thumbs.db
+Desktop.ini
+
+# Test and temporary output
+TestResults/
+*.trx

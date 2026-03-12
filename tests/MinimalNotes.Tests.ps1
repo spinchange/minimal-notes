@@ -1,0 +1,460 @@
+$here = Split-Path -Parent $MyInvocation.MyCommand.Path
+$projectRoot = Split-Path -Parent $here
+$scriptPath = Join-Path $projectRoot "note.ps1"
+
+function New-TestVault {
+    $path = Join-Path ([System.IO.Path]::GetTempPath()) ("minimal-notes-tests-" + [guid]::NewGuid().ToString("n"))
+    New-Item -ItemType Directory -Path $path | Out-Null
+    return $path
+}
+
+function Remove-TestVault {
+    param([string]$Path)
+
+    if ($Path -and (Test-Path -LiteralPath $Path)) {
+        Remove-Item -LiteralPath $Path -Recurse -Force
+    }
+}
+
+function Invoke-NoteCli {
+    param(
+        [string]$VaultPath,
+        [string[]]$Arguments
+    )
+
+    $env:MINIMAL_NOTES_VAULT = $VaultPath
+    $env:MINIMAL_NOTES_NO_OPEN = "1"
+
+    $output = & pwsh -NoProfile -File $scriptPath @Arguments 2>&1
+    $exitCode = $LASTEXITCODE
+
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        Output   = @($output)
+        Text     = (@($output) -join [Environment]::NewLine).Trim()
+    }
+}
+
+function Invoke-InteractivePick {
+    param(
+        [string]$VaultPath,
+        [string]$InputText,
+        [string]$Query
+    )
+
+    $escapedScriptPath = $scriptPath.Replace('"', '""')
+    $escapedVaultPath = $VaultPath.Replace('"', '""')
+    $escapedInput = $InputText.Replace('"', '""')
+    $escapedQuery = $Query.Replace('"', '""')
+    $command = 'set "MINIMAL_NOTES_VAULT={0}" && set "MINIMAL_NOTES_NO_OPEN=1" && (echo {1}) | pwsh -NoProfile -File "{2}" pick "{3}"' -f $escapedVaultPath, $escapedInput, $escapedScriptPath, $escapedQuery
+
+    $output = & cmd /c $command 2>&1
+    $exitCode = $LASTEXITCODE
+
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        Output   = @($output)
+        Text     = (@($output) -join [Environment]::NewLine).Trim()
+    }
+}
+
+Describe "Minimal Notes CLI" {
+    BeforeEach {
+        $script:VaultPath = New-TestVault
+    }
+
+    AfterEach {
+        Remove-TestVault -Path $script:VaultPath
+        Remove-Item Env:MINIMAL_NOTES_VAULT -ErrorAction SilentlyContinue
+        Remove-Item Env:MINIMAL_NOTES_NO_OPEN -ErrorAction SilentlyContinue
+    }
+
+    It "creates a note with new" {
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("new", "Project Ideas")
+
+        $result.ExitCode | Should Be 0
+        (Test-Path -LiteralPath (Join-Path $script:VaultPath "project-ideas.md")) | Should Be $true
+        (Get-Content -LiteralPath (Join-Path $script:VaultPath "project-ideas.md") -Raw) | Should Match "# Project Ideas"
+    }
+
+    It "lists notes with a filter" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "alpha.md") -Value @(
+            "# Alpha Note",
+            "",
+            "Tags: #alpha"
+        )
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "beta.md") -Value @(
+            "# Beta Note"
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("list", "alpha")
+
+        $result.ExitCode | Should Be 0
+        $result.Text | Should Match "Alpha Note"
+        $result.Text | Should Not Match "Beta Note"
+    }
+
+    It "searches note content" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "search-target.md") -Value @(
+            "# Search Target",
+            "",
+            "PowerShell is great for automation."
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("search", "automation")
+
+        $result.ExitCode | Should Be 0
+        $result.Text | Should Match "search-target.md:3: PowerShell is great for automation."
+    }
+
+    It "shows links from a note" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "source.md") -Value @(
+            "# Source",
+            "",
+            "See [[Target Note]] and [[another-note|Alias]]."
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("links", "source")
+
+        $result.ExitCode | Should Be 0
+        $result.Text | Should Match "Target Note"
+        $result.Text | Should Match "another-note"
+    }
+
+    It "finds backlinks including aliased wiki links" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "target-note.md") -Value @(
+            "# Target Note"
+        )
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "source.md") -Value @(
+            "# Source",
+            "",
+            "Points to [[Target Note|the target]]."
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("backlinks", "Target Note")
+
+        $result.ExitCode | Should Be 0
+        $result.Text | Should Match "source.md"
+    }
+
+    It "fuzzy finds a note by partial query" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "terminal-ui.md") -Value @(
+            "# Terminal UI"
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("find", "termui")
+
+        $result.ExitCode | Should Be 0
+        $result.Text | Should Match "Terminal UI"
+    }
+
+    It "lists tags and filters by tag" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "inbox.md") -Value @(
+            "# Inbox",
+            "",
+            "Tags: #inbox #capture"
+        )
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "ideas.md") -Value @(
+            "# Ideas",
+            "",
+            "Tags: #ideas"
+        )
+
+        $allTags = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("tags")
+        $filtered = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("tags", "inbox")
+
+        $allTags.ExitCode | Should Be 0
+        $allTags.Text | Should Match "#inbox"
+        $allTags.Text | Should Match "#capture"
+        $filtered.ExitCode | Should Be 0
+        $filtered.Text | Should Match "Inbox  inbox.md"
+    }
+
+    It "prints a preview of a note" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "welcome.md") -Value @(
+            "# Welcome",
+            "",
+            "Hello from preview."
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("preview", "welcome")
+
+        $result.ExitCode | Should Be 0
+        $result.Text | Should Match "Hello from preview."
+    }
+
+    It "creates a daily note without opening an editor" {
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("daily", "2026-03-12")
+        $dailyPath = Join-Path (Join-Path $script:VaultPath "daily") "2026-03-12.md"
+
+        $result.ExitCode | Should Be 0
+        $result.Text | Should Be $dailyPath
+        (Test-Path -LiteralPath $dailyPath) | Should Be $true
+        (Get-Content -LiteralPath $dailyPath -Raw) | Should Match "## Notes"
+    }
+
+    It "captures a quick note to inbox" {
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("capture", "remember the milk")
+        $inboxPath = Join-Path $script:VaultPath "inbox.md"
+
+        $result.ExitCode | Should Be 0
+        $result.Text | Should Be $inboxPath
+        (Test-Path -LiteralPath $inboxPath) | Should Be $true
+        (Get-Content -LiteralPath $inboxPath -Raw) | Should Match "remember the milk"
+    }
+
+    It "captures a quick note to today's daily note" {
+        $todayPath = Join-Path (Join-Path $script:VaultPath "daily") ("{0}.md" -f (Get-Date).ToString("yyyy-MM-dd"))
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("capture", "daily", "ship the prototype")
+
+        $result.ExitCode | Should Be 0
+        $result.Text | Should Be $todayPath
+        (Test-Path -LiteralPath $todayPath) | Should Be $true
+        (Get-Content -LiteralPath $todayPath -Raw) | Should Match "ship the prototype"
+    }
+
+    It "lists orphan notes with no inbound links" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "hub.md") -Value @(
+            "# Hub",
+            "",
+            "Links to [[Child Note]]."
+        )
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "child-note.md") -Value @(
+            "# Child Note"
+        )
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "lonely.md") -Value @(
+            "# Lonely"
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("orphans")
+
+        $result.ExitCode | Should Be 0
+        $result.Text | Should Match "Hub  hub.md"
+        $result.Text | Should Match "Lonely  lonely.md"
+        $result.Text | Should Not Match "Child Note"
+    }
+
+    It "lists recent notes in newest-first order with a limit" {
+        $firstPath = Join-Path $script:VaultPath "first.md"
+        $secondPath = Join-Path $script:VaultPath "second.md"
+        $thirdPath = Join-Path $script:VaultPath "third.md"
+
+        Set-Content -LiteralPath $firstPath -Value "# First"
+        Set-Content -LiteralPath $secondPath -Value "# Second"
+        Set-Content -LiteralPath $thirdPath -Value "# Third"
+
+        (Get-Item -LiteralPath $firstPath).LastWriteTime = [datetime]"2026-03-09T10:00:00"
+        (Get-Item -LiteralPath $secondPath).LastWriteTime = [datetime]"2026-03-10T10:00:00"
+        (Get-Item -LiteralPath $thirdPath).LastWriteTime = [datetime]"2026-03-11T10:00:00"
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("recent", "2")
+
+        $result.ExitCode | Should Be 0
+        $lines = @($result.Output | Where-Object { $_ -and $_.ToString().Trim() })
+        $lines.Count | Should Be 2
+        $lines[0].ToString() | Should Match "Third  third.md"
+        $lines[1].ToString() | Should Match "Second  second.md"
+    }
+
+    It "collects open tasks by default" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "tasks.md") -Value @(
+            "# Tasks",
+            "",
+            "- [ ] First open task",
+            "- [x] Finished task",
+            "* [ ] Second open task"
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("tasks")
+
+        $result.ExitCode | Should Be 0
+        $result.Text | Should Match "tasks.md:3  \[open\] First open task"
+        $result.Text | Should Match "tasks.md:5  \[open\] Second open task"
+        $result.Text | Should Not Match "Finished task"
+    }
+
+    It "can collect done tasks or all tasks" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "tasks.md") -Value @(
+            "# Tasks",
+            "",
+            "- [ ] First open task",
+            "- [x] Finished task"
+        )
+
+        $doneResult = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("tasks", "done")
+        $allResult = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("tasks", "all")
+
+        $doneResult.ExitCode | Should Be 0
+        $doneResult.Text | Should Match "tasks.md:4  \[done\] Finished task"
+        $doneResult.Text | Should Not Match "First open task"
+
+        $allResult.ExitCode | Should Be 0
+        $allResult.Text | Should Match "First open task"
+        $allResult.Text | Should Match "Finished task"
+    }
+
+    It "reads and updates frontmatter properties" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "project.md") -Value @(
+            "# Project"
+        )
+
+        $setStatus = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("props", "project", "set", "status", "active")
+        $addTags = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("props", "project", "add", "tags", "work,planning")
+        $show = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("props", "project")
+        $content = Get-Content -LiteralPath (Join-Path $script:VaultPath "project.md") -Raw
+
+        $setStatus.ExitCode | Should Be 0
+        $addTags.ExitCode | Should Be 0
+        $show.ExitCode | Should Be 0
+        $show.Text | Should Match "status: active"
+        $show.Text | Should Match "tags: planning, work|tags: work, planning"
+        $content | Should Match "(?s)^---"
+        $content | Should Match "status: active"
+        $content | Should Match "tags:"
+    }
+
+    It "resolves aliases from frontmatter in existing commands" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "project.md") -Value @(
+            "---",
+            "aliases:",
+            "  - Idea Bank",
+            "tags:",
+            "  - work",
+            "---",
+            "",
+            "# Project"
+        )
+
+        $preview = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("preview", "Idea Bank")
+        $tags = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("tags", "work")
+
+        $preview.ExitCode | Should Be 0
+        $preview.Text | Should Match "# Project"
+        $tags.ExitCode | Should Be 0
+        $tags.Text | Should Match "Project  project.md"
+    }
+
+    It "renames a note and updates wiki links while preserving aliases" {
+        $oldPath = Join-Path $script:VaultPath "old-note.md"
+        $sourcePath = Join-Path $script:VaultPath "source.md"
+
+        Set-Content -LiteralPath $oldPath -Value @(
+            "# Old Note",
+            "",
+            "Self link to [[Old Note]]."
+        )
+        Set-Content -LiteralPath $sourcePath -Value @(
+            "# Source",
+            "",
+            "Plain [[Old Note]] and aliased [[old-note|Custom Label]]."
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("rename", "Old Note", "New Note")
+        $newPath = Join-Path $script:VaultPath "new-note.md"
+
+        $result.ExitCode | Should Be 0
+        $result.Text | Should Be $newPath
+        (Test-Path -LiteralPath $newPath) | Should Be $true
+        (Test-Path -LiteralPath $oldPath) | Should Be $false
+
+        $renamedNote = Get-Content -LiteralPath $newPath -Raw
+        $sourceNote = Get-Content -LiteralPath $sourcePath -Raw
+
+        $renamedNote | Should Match "# New Note"
+        $renamedNote | Should Match "\[\[New Note\]\]"
+        $sourceNote | Should Match "\[\[New Note\]\]"
+        $sourceNote | Should Match "\[\[New Note\|Custom Label\]\]"
+        $sourceNote | Should Not Match "\[\[Old Note\]\]"
+        $sourceNote | Should Not Match "\[\[old-note\|Custom Label\]\]"
+    }
+
+    It "lists unresolved wiki links across the vault" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "source.md") -Value @(
+            "# Source",
+            "",
+            "Links to [[Missing Note]] and [[Existing Note]]."
+        )
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "existing-note.md") -Value @(
+            "# Existing Note"
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("unresolved")
+
+        $result.ExitCode | Should Be 0
+        $result.Text | Should Match "source.md -> \[\[Missing Note\]\] -> missing-note.md"
+        $result.Text | Should Not Match "Existing Note"
+    }
+
+    It "lists unresolved wiki links for a single note" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "source.md") -Value @(
+            "# Source",
+            "",
+            "Links to [[Missing Note]]."
+        )
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "other.md") -Value @(
+            "# Other",
+            "",
+            "Links to [[Another Missing]]."
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("unresolved", "source")
+
+        $result.ExitCode | Should Be 0
+        $result.Text | Should Match "source.md -> \[\[Missing Note\]\] -> missing-note.md"
+        $result.Text | Should Not Match "Another Missing"
+    }
+
+    It "creates notes for all unresolved links" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "source.md") -Value @(
+            "# Source",
+            "",
+            "Links to [[Missing Note]] and [[Another Missing]]."
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("create-unresolved", "all")
+
+        $result.ExitCode | Should Be 0
+        (Test-Path -LiteralPath (Join-Path $script:VaultPath "missing-note.md")) | Should Be $true
+        (Test-Path -LiteralPath (Join-Path $script:VaultPath "another-missing.md")) | Should Be $true
+        $result.Text | Should Match "missing-note.md"
+        $result.Text | Should Match "another-missing.md"
+    }
+
+    It "creates one selected unresolved link target" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "source.md") -Value @(
+            "# Source",
+            "",
+            "Links to [[Missing Note]] and [[Another Missing]]."
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("create-unresolved", "Missing Note")
+
+        $result.ExitCode | Should Be 0
+        (Test-Path -LiteralPath (Join-Path $script:VaultPath "missing-note.md")) | Should Be $true
+        (Test-Path -LiteralPath (Join-Path $script:VaultPath "another-missing.md")) | Should Be $false
+        $result.Text | Should Match "missing-note.md"
+    }
+
+    It "pick opens the selected fuzzy match in no-open mode" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "welcome.md") -Value @(
+            "# Welcome"
+        )
+
+        $result = Invoke-InteractivePick -VaultPath $script:VaultPath -InputText "1" -Query "welcome"
+
+        $result.ExitCode | Should Be 0
+        $result.Text | Should Match "Matches for 'welcome':"
+        $result.Text | Should Match "1\. Welcome  welcome\.md"
+        $result.Text | Should Match ([regex]::Escape((Join-Path $script:VaultPath "welcome.md")))
+    }
+
+    It "pick can create a new note when there are no matches" {
+        $result = Invoke-InteractivePick -VaultPath $script:VaultPath -InputText "y" -Query "scratch-pad"
+        $createdPath = Join-Path $script:VaultPath "scratch-pad.md"
+
+        $result.ExitCode | Should Be 0
+        $result.Text | Should Match ([regex]::Escape($createdPath))
+        (Test-Path -LiteralPath $createdPath) | Should Be $true
+        (Get-Content -LiteralPath $createdPath -Raw) | Should Match "# scratch-pad"
+    }
+}
