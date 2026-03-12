@@ -1,69 +1,61 @@
 # Minimal Notes
 
-A lightweight, stripped-down Obsidian-style notes setup for PowerShell 7.
+A lightweight, local-first, Obsidian-inspired notes CLI for PowerShell 7.
 
-Notes are just markdown files in the local `vault` folder. The CLI gives you:
+Minimal Notes keeps the model simple: your notes are plain markdown files in a local `vault`, and the CLI adds the connective tissue around them.
 
-- note creation
-- editor launch
-- plain-text search
-- fuzzy note finding
+## Why this exists
+
+This project aims for the useful core of Obsidian without the heavyweight app shell:
+
+- local markdown files
+- wiki links and backlinks
+- fast capture and retrieval
+- lightweight metadata and aliases
+- scriptable PowerShell workflows
+
+## Features
+
+- note creation and opening
+- full-text search and fuzzy note finding
 - interactive note picker
-- quick capture
-- orphan-note detection
-- recent note listing
-- task collection
-- frontmatter properties
-- note rename with link updates
-- unresolved-link detection
-- wiki links like `[[Project Ideas]]`
-- backlinks
-- tag discovery
+- wiki links, backlinks, and unresolved-link detection
+- quick capture to inbox or daily notes
+- orphan and recent note views
+- task collection from markdown checkboxes
+- frontmatter properties, tags, and aliases
+- safe note rename with automatic link updates
 - terminal preview
-- daily notes
 
 ## Quick start
 
-From `C:\Users\user\minimal-notes`:
+From the project folder:
 
 ```powershell
 pwsh -NoProfile -File .\note.ps1 help
 pwsh -NoProfile -File .\note.ps1 new "Project Ideas"
-pwsh -NoProfile -File .\note.ps1 open "Project Ideas"
-pwsh -NoProfile -File .\note.ps1 search powershell
-pwsh -NoProfile -File .\note.ps1 find pwsh
-pwsh -NoProfile -File .\note.ps1 pick termui
 pwsh -NoProfile -File .\note.ps1 capture "remember this"
-pwsh -NoProfile -File .\note.ps1 capture daily "follow up on the build"
-pwsh -NoProfile -File .\note.ps1 orphans
-pwsh -NoProfile -File .\note.ps1 recent 5
 pwsh -NoProfile -File .\note.ps1 tasks
-pwsh -NoProfile -File .\note.ps1 props "Project Ideas"
 pwsh -NoProfile -File .\note.ps1 props "Project Ideas" set status active
-pwsh -NoProfile -File .\note.ps1 rename "Old Note" "New Note"
-pwsh -NoProfile -File .\note.ps1 unresolved
-pwsh -NoProfile -File .\note.ps1 create-unresolved all
-pwsh -NoProfile -File .\note.ps1 backlinks "Project Ideas"
-pwsh -NoProfile -File .\note.ps1 tags
-pwsh -NoProfile -File .\note.ps1 daily
-```
-
-Run tests:
-
-```powershell
 pwsh -NoProfile -File .\run-tests.ps1
 ```
 
-## Vault layout
+## Privacy defaults
+
+The repository intentionally ignores the contents of `vault/` by default.
+
+- your real notes are treated as private local data
+- the repo tracks code, docs, tests, and `vault/.gitkeep`
+- if you want to version a vault later, you can change `.gitignore` deliberately
+
+## Project layout
 
 ```text
 minimal-notes/
   note.ps1
-  README.md
+  run-tests.ps1
+  tests/
   vault/
-    inbox.md
-    welcome.md
-    daily/
 ```
 
 ## Commands
@@ -89,23 +81,18 @@ tags       List all tags, or notes containing a tag.
 preview    Print a note to the terminal.
 daily      Open or create a daily note at daily/YYYY-MM-DD.md.
 path       Print the current vault path.
-help       Show the built-in help.
+help       Show this help.
 ```
 
-## Optional environment variables
+## Environment
 
 ```powershell
 $env:MINIMAL_NOTES_VAULT = "C:\Users\user\Documents\notes"
 $env:MINIMAL_NOTES_EDITOR = "notepad.exe"
+$env:MINIMAL_NOTES_NO_OPEN = "1"
 ```
 
 If `MINIMAL_NOTES_EDITOR` is not set, the script tries `code` first and falls back to `notepad.exe`.
-
-For tests or headless usage, you can skip opening the editor:
-
-```powershell
-$env:MINIMAL_NOTES_NO_OPEN = "1"
-```
 
 ## Example workflow
 
@@ -125,63 +112,23 @@ Tags: #powershell #ideas
 Look at [[Terminal UI]] and [[Daily Review]].
 ```
 
-Find outgoing links:
+Work with notes:
 
 ```powershell
 pwsh -NoProfile -File .\note.ps1 links "PowerShell Ideas"
-```
-
-Find backlinks:
-
-```powershell
 pwsh -NoProfile -File .\note.ps1 backlinks "Terminal UI"
-```
-
-Find notes fuzzily:
-
-```powershell
 pwsh -NoProfile -File .\note.ps1 find termui
-```
-
-Open from a shortlist:
-
-```powershell
 pwsh -NoProfile -File .\note.ps1 pick termui
 ```
 
-If you omit the query, the script asks for one and then shows a numbered list.
-
-Quick capture to inbox:
+Capture and review:
 
 ```powershell
 pwsh -NoProfile -File .\note.ps1 capture "remember to simplify the picker"
-```
-
-Quick capture to today's daily note:
-
-```powershell
 pwsh -NoProfile -File .\note.ps1 capture daily "ship the prototype"
-```
-
-Show orphan notes:
-
-```powershell
 pwsh -NoProfile -File .\note.ps1 orphans
-```
-
-Show the most recent notes:
-
-```powershell
-pwsh -NoProfile -File .\note.ps1 recent
 pwsh -NoProfile -File .\note.ps1 recent 5
-```
-
-Collect open tasks:
-
-```powershell
 pwsh -NoProfile -File .\note.ps1 tasks
-pwsh -NoProfile -File .\note.ps1 tasks all
-pwsh -NoProfile -File .\note.ps1 tasks done
 ```
 
 Read or update frontmatter properties:
@@ -206,27 +153,27 @@ aliases:
 ---
 ```
 
-Rename a note and rewrite links:
+Maintain link structure:
 
 ```powershell
 pwsh -NoProfile -File .\note.ps1 rename "Project Ideas" "Project Archive"
-```
-
-Show missing linked notes:
-
-```powershell
 pwsh -NoProfile -File .\note.ps1 unresolved
-pwsh -NoProfile -File .\note.ps1 unresolved "Project Ideas"
-```
-
-Create all missing linked notes:
-
-```powershell
 pwsh -NoProfile -File .\note.ps1 create-unresolved all
 ```
 
-List all tags:
+## Testing
+
+Run the local test suite:
 
 ```powershell
-pwsh -NoProfile -File .\note.ps1 tags
+pwsh -NoProfile -File .\run-tests.ps1
 ```
+
+Current local status:
+
+- 24 tests passing
+- 0 failures
+
+## License
+
+[MIT](./LICENSE)
