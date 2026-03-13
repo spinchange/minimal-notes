@@ -20,6 +20,9 @@ All notable changes to this project are documented here.
 - `weekly` and `monthly` note workflows alongside the existing daily notes
 - `related` note suggestions from links and shared tags
 - `graph` command that prints Mermaid link graphs for one note or the whole vault
+- `merge` command to combine notes and rewrite inbound links
+- `split` command to extract a heading section into a new linked note
+- `repair-links` command to repair unresolved links when there is a clear fuzzy match
 
 ### Changed
 
@@ -58,6 +61,7 @@ All notable changes to this project are documented here.
 - dashboard, reporting, and review workflows
 - daily, weekly, and monthly note workflows
 - related-note suggestions and Mermaid graph output
+- merge, split, and repair-link refactoring workflows
 
 ### Quality and reliability
 
@@ -69,6 +73,7 @@ All notable changes to this project are documented here.
 - `.gitattributes` for line-ending normalization
 - module import smoke coverage
 - broader workflow coverage for dashboard, report/review, calendar notes, and graph tooling
+- regression coverage for merge, split, and link-repair commands
 
 ### Repository polish
 

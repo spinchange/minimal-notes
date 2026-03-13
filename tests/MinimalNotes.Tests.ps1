@@ -629,6 +629,98 @@ Describe "Minimal Notes CLI" {
         $graphResult.Text | Should -Match "Shared Note"
     }
 
+    It "merges a note into another and rewrites links" {
+        $sourcePath = Join-Path $script:VaultPath "source-note.md"
+        $targetPath = Join-Path $script:VaultPath "target-note.md"
+        $referrerPath = Join-Path $script:VaultPath "referrer.md"
+
+        Set-Content -LiteralPath $sourcePath -Value @(
+            "# Source Note",
+            "",
+            "Body from source."
+        )
+        Set-Content -LiteralPath $targetPath -Value @(
+            "# Target Note",
+            "",
+            "Existing target body."
+        )
+        Set-Content -LiteralPath $referrerPath -Value @(
+            "# Referrer",
+            "",
+            "See [[Source Note]]."
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("merge", "Source Note", "Target Note")
+
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Be $targetPath
+        (Test-Path -LiteralPath $sourcePath) | Should -Be $false
+
+        $mergedContent = Get-Content -LiteralPath $targetPath -Raw
+        $referrerContent = Get-Content -LiteralPath $referrerPath -Raw
+
+        $mergedContent | Should -Match "## Merged from Source Note"
+        $mergedContent | Should -Match "Body from source."
+        $referrerContent | Should -Match "\[\[Target Note\]\]"
+        $referrerContent | Should -Not -Match "\[\[Source Note\]\]"
+    }
+
+    It "splits a heading section into a new linked note" {
+        $sourcePath = Join-Path $script:VaultPath "project.md"
+
+        Set-Content -LiteralPath $sourcePath -Value @(
+            "# Project",
+            "",
+            "Intro.",
+            "",
+            "## Decisions",
+            "",
+            "Decision details.",
+            "",
+            "## Next Steps",
+            "",
+            "Do the thing."
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("split", "Project", "Decisions", "Project Decisions")
+        $newPath = Join-Path $script:VaultPath "project-decisions.md"
+
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Be $newPath
+        (Test-Path -LiteralPath $newPath) | Should -Be $true
+
+        $newContent = Get-Content -LiteralPath $newPath -Raw
+        $sourceContent = Get-Content -LiteralPath $sourcePath -Raw
+
+        $newContent | Should -Match "# Decisions"
+        $newContent | Should -Match "Decision details."
+        $sourceContent | Should -Match "Moved to \[\[Project Decisions\]\]"
+        $sourceContent | Should -Match "## Next Steps"
+    }
+
+    It "repairs unresolved links when there is a clear fuzzy match" {
+        $sourcePath = Join-Path $script:VaultPath "source.md"
+        $targetPath = Join-Path $script:VaultPath "project-archive.md"
+
+        Set-Content -LiteralPath $targetPath -Value @(
+            "# Project Archive"
+        )
+        Set-Content -LiteralPath $sourcePath -Value @(
+            "# Source",
+            "",
+            "See [[Project Archve]]."
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("repair-links")
+        $updatedContent = Get-Content -LiteralPath $sourcePath -Raw
+
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Match "Project Archve"
+        $result.Text | Should -Match "Project Archive"
+        $updatedContent | Should -Match "\[\[Project Archive\]\]"
+        $updatedContent | Should -Not -Match "\[\[Project Archve\]\]"
+    }
+
     It "reads and updates frontmatter properties" {
         Set-Content -LiteralPath (Join-Path $script:VaultPath "project.md") -Value @(
             "# Project"

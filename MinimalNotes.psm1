@@ -960,6 +960,206 @@ function Update-LinksInContent {
     })
 }
 
+function Get-HeadingMatch {
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Line,
+        [Parameter(Mandatory)][string]$Heading
+    )
+
+    $match = [regex]::Match($Line, '^(#+)\s+(.+?)\s*$')
+    if (-not $match.Success) {
+        return $null
+    }
+
+    if ($match.Groups[2].Value.Trim() -ne $Heading.Trim()) {
+        return $null
+    }
+
+    return [pscustomobject]@{
+        Level = $match.Groups[1].Value.Length
+        Title = $match.Groups[2].Value.Trim()
+    }
+}
+
+function Get-SectionRange {
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string[]]$Lines,
+        [Parameter(Mandatory)][string]$Heading
+    )
+
+    for ($i = 0; $i -lt $Lines.Count; $i++) {
+        $headingMatch = Get-HeadingMatch -Line $Lines[$i] -Heading $Heading
+        if (-not $headingMatch) {
+            continue
+        }
+
+        $start = $i
+        $end = $Lines.Count - 1
+        for ($j = $i + 1; $j -lt $Lines.Count; $j++) {
+            $nextMatch = [regex]::Match($Lines[$j], '^(#+)\s+(.+?)\s*$')
+            if ($nextMatch.Success -and $nextMatch.Groups[1].Value.Length -le $headingMatch.Level) {
+                $end = $j - 1
+                break
+            }
+        }
+
+        return [pscustomobject]@{
+            Start = $start
+            End   = $end
+            Level = $headingMatch.Level
+            Title = $headingMatch.Title
+        }
+    }
+
+    return $null
+}
+
+function Merge-Notes {
+    param(
+        [Parameter(Mandatory)][string]$SourceName,
+        [Parameter(Mandatory)][string]$TargetName
+    )
+
+    $sourcePath = Resolve-Note -Name $SourceName
+    if (-not $sourcePath) {
+        throw "Source note not found: $SourceName"
+    }
+
+    $targetPath = Resolve-Note -Name $TargetName
+    if (-not $targetPath) {
+        throw "Target note not found: $TargetName"
+    }
+
+    if ($sourcePath -eq $targetPath) {
+        throw "Source and target notes must be different."
+    }
+
+    $sourceTitle = Get-NoteTitle -Path $sourcePath
+    $targetTitle = Get-NoteTitle -Path $targetPath
+    $sourceContent = Get-Content -LiteralPath $sourcePath -Raw
+    $targetContent = Get-Content -LiteralPath $targetPath -Raw
+    $sourceKeys = @(Get-LinkMatcherKeys -Path $sourcePath)
+    $targetLinkTarget = $targetTitle
+
+    $mergedBlock = @(
+        ""
+        "## Merged from $sourceTitle"
+        ""
+        (Update-LinksInContent -Content $sourceContent -OldKeys $sourceKeys -NewTarget $targetLinkTarget)
+    ) -join [Environment]::NewLine
+
+    $updatedTarget = ($targetContent.TrimEnd() + [Environment]::NewLine + $mergedBlock.TrimEnd() + [Environment]::NewLine)
+    Set-Content -LiteralPath $targetPath -Value $updatedTarget -Encoding utf8
+
+    Get-ChildItem -LiteralPath $Script:VaultRoot -Recurse -File -Filter "*.md" |
+        Where-Object { $_.FullName -ne $sourcePath } |
+        ForEach-Object {
+            $content = Get-Content -LiteralPath $_.FullName -Raw
+            $updated = Update-LinksInContent -Content $content -OldKeys $sourceKeys -NewTarget $targetLinkTarget
+            if ($updated -cne $content) {
+                Set-Content -LiteralPath $_.FullName -Value $updated -Encoding utf8
+            }
+        }
+
+    Remove-Item -LiteralPath $sourcePath -Force
+    Write-Output $targetPath
+}
+
+function Split-NoteSection {
+    param(
+        [Parameter(Mandatory)][string]$SourceName,
+        [Parameter(Mandatory)][string]$Heading,
+        [string]$NewName
+    )
+
+    $sourcePath = Resolve-Note -Name $SourceName
+    if (-not $sourcePath) {
+        throw "Source note not found: $SourceName"
+    }
+
+    $sourceLines = @(Get-Content -LiteralPath $sourcePath)
+    $range = Get-SectionRange -Lines $sourceLines -Heading $Heading
+    if (-not $range) {
+        throw "Heading not found in note: $Heading"
+    }
+
+    $newNoteName = if ($NewName) { $NewName } else { $range.Title }
+    $newPath = Get-PlannedNotePath -Name $newNoteName
+    if (Test-Path -LiteralPath $newPath) {
+        throw "Target note already exists: $newPath"
+    }
+    $replacementTarget = $newNoteName
+
+    $sectionLines = @($sourceLines[$range.Start..$range.End])
+    $bodyLines = if ($sectionLines.Count -gt 1) { @($sectionLines[1..($sectionLines.Count - 1)]) } else { @() }
+    $newContent = @(
+        "# $($range.Title)"
+        ""
+    ) + $bodyLines
+    Set-Content -LiteralPath $newPath -Value $newContent -Encoding utf8
+
+    $replacement = @(
+        "## $($range.Title)"
+        ""
+        "Moved to [[{0}]]." -f $replacementTarget
+        ""
+    )
+
+    $updatedLines = @()
+    if ($range.Start -gt 0) {
+        $updatedLines += @($sourceLines[0..($range.Start - 1)])
+    }
+    $updatedLines += $replacement
+    if ($range.End + 1 -lt $sourceLines.Count) {
+        $updatedLines += @($sourceLines[($range.End + 1)..($sourceLines.Count - 1)])
+    }
+
+    Set-Content -LiteralPath $sourcePath -Value $updatedLines -Encoding utf8
+    Write-Output $newPath
+}
+
+function Repair-Links {
+    param([string]$Target)
+
+    $items = @(Get-UnresolvedLinks)
+    if ($items.Count -eq 0) {
+        return
+    }
+
+    if ($Target) {
+        $normalized = $Target.Trim().ToLowerInvariant()
+        if ($normalized -ne "all") {
+            $items = @($items | Where-Object { $_.Target.ToLowerInvariant() -eq $normalized })
+        }
+    }
+
+    $repaired = New-Object System.Collections.Generic.List[string]
+
+    foreach ($group in @($items | Group-Object Target)) {
+        $matches = @(Find-Notes -Query $group.Name -Limit 2)
+        if ($matches.Count -ne 1) {
+            continue
+        }
+
+        $replacementTitle = $matches[0].Note.Title
+        foreach ($item in @($group.Group)) {
+            $sourcePath = Join-Path $Script:VaultRoot $item.Source
+            if (-not (Test-Path -LiteralPath $sourcePath)) {
+                continue
+            }
+
+            $content = Get-Content -LiteralPath $sourcePath -Raw
+            $updated = Update-LinksInContent -Content $content -OldKeys @((Normalize-NoteReference -Reference $item.Target)) -NewTarget $replacementTitle
+            if ($updated -cne $content) {
+                Set-Content -LiteralPath $sourcePath -Value $updated -Encoding utf8
+                $repaired.Add(("{0} -> [[{1}]] => [[{2}]]" -f $item.Source, $item.Target, $replacementTitle))
+            }
+        }
+    }
+
+    $repaired | Sort-Object -Unique
+}
+
 function New-TemplateFile {
     param([Parameter(Mandatory)][string]$Name)
 
@@ -1069,6 +1269,11 @@ Usage:
   ./note.ps1 related "My Note"
   ./note.ps1 graph
   ./note.ps1 graph "My Note"
+  ./note.ps1 merge "Source Note" "Target Note"
+  ./note.ps1 split "Source Note" "Section Heading"
+  ./note.ps1 split "Source Note" "Section Heading" "New Note"
+  ./note.ps1 repair-links
+  ./note.ps1 repair-links all
   ./note.ps1 template
   ./note.ps1 template list
   ./note.ps1 template show meeting
@@ -1106,6 +1311,9 @@ Commands:
   tasks      Collect markdown checkbox tasks with frontmatter context.
   related    Suggest notes related to a target note by links and tags.
   graph      Print a Mermaid note-link graph for one note or the full vault.
+  merge      Merge one note into another and rewrite inbound links.
+  split      Split a heading section into a new linked note.
+  repair-links Attempt to repair unresolved wiki links using fuzzy note matches.
   template   List, preview, or create note templates in templates/.
   props      Read or update frontmatter properties for a note.
   rename     Rename a note file and update wiki links that point to it.
@@ -2199,6 +2407,29 @@ function Invoke-MinimalNotesCli {
         "graph" {
             $name = if ($Arguments.Count -gt 0) { $Arguments -join " " } else { $null }
             Show-Graph -NameText $name
+        }
+        "merge" {
+            if ($Arguments.Count -lt 2) {
+                throw "Usage: ./note.ps1 merge `"Source Note`" `"Target Note`""
+            }
+
+            $sourceName = $Arguments[0]
+            $targetName = ($Arguments[1..($Arguments.Count - 1)] -join " ").Trim()
+            Merge-Notes -SourceName $sourceName -TargetName $targetName
+        }
+        "split" {
+            if ($Arguments.Count -lt 2) {
+                throw "Usage: ./note.ps1 split `"Source Note`" `"Section Heading`" [`"New Note`"]"
+            }
+
+            $sourceName = $Arguments[0]
+            $heading = $Arguments[1]
+            $newName = if ($Arguments.Count -gt 2) { ($Arguments[2..($Arguments.Count - 1)] -join " ").Trim() } else { $null }
+            Split-NoteSection -SourceName $sourceName -Heading $heading -NewName $newName
+        }
+        "repair-links" {
+            $target = if ($Arguments.Count -gt 0) { $Arguments -join " " } else { $null }
+            Repair-Links -Target $target
         }
         "template" {
             $templateArgs = @($Arguments | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })

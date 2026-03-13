@@ -28,6 +28,7 @@ This project aims for the useful core of Obsidian without the heavyweight app sh
 - dashboard, report, and review views
 - weekly and monthly notes
 - related-note suggestions and Mermaid graph output
+- merge, split, and repair-link refactoring tools
 - frontmatter properties, tags, and aliases
 - safe note rename with automatic link updates
 - terminal preview
@@ -44,6 +45,7 @@ pwsh -NoProfile -File .\note.ps1 template new meeting
 pwsh -NoProfile -File .\note.ps1 new "Sprint Review" --template meeting
 pwsh -NoProfile -File .\note.ps1 dashboard
 pwsh -NoProfile -File .\note.ps1 weekly
+pwsh -NoProfile -File .\note.ps1 merge "Draft" "Project Archive"
 pwsh -NoProfile -File .\note.ps1 tasks
 pwsh -NoProfile -File .\note.ps1 tasks today
 pwsh -NoProfile -File .\note.ps1 props "Project Ideas" set status active
@@ -91,6 +93,9 @@ tasks      Collect markdown checkbox tasks across the vault.
           Supports open, done, all, today, and overdue views.
 related    Suggest notes related to a target note by links and tags.
 graph      Print a Mermaid note-link graph for one note or the full vault.
+merge      Merge one note into another and rewrite inbound links.
+split      Split a heading section into a new linked note.
+repair-links Attempt to repair unresolved wiki links using fuzzy note matches.
 template   List, preview, or create note templates.
 props      Read or update frontmatter properties for a note.
 rename     Rename a note file and update wiki links that point to it.
@@ -245,6 +250,9 @@ pwsh -NoProfile -File .\note.ps1 unresolved
 pwsh -NoProfile -File .\note.ps1 create-unresolved all
 pwsh -NoProfile -File .\note.ps1 related "Project Archive"
 pwsh -NoProfile -File .\note.ps1 graph "Project Archive"
+pwsh -NoProfile -File .\note.ps1 merge "Project Draft" "Project Archive"
+pwsh -NoProfile -File .\note.ps1 split "Project Archive" "Decisions" "Project Decisions"
+pwsh -NoProfile -File .\note.ps1 repair-links
 ```
 
 Calendar and overview workflows:
@@ -284,9 +292,9 @@ Focus: make the vault easier to navigate as it grows.
 
 Focus: help reorganize a growing vault safely.
 
-- merge two notes and rewrite incoming links
-- split sections into new linked notes
-- repair broken or ambiguous links with suggestions
+- ~~merge two notes and rewrite incoming links~~
+- ~~split sections into new linked notes~~
+- ~~repair broken or ambiguous links with suggestions~~
 - dedupe near-duplicate notes by title or content similarity
 - extend `rename` to handle more path-move and alias-update cases
 
@@ -325,7 +333,7 @@ Install-Module Pester -Scope CurrentUser -Force -SkipPublisherCheck
 
 Current local status:
 
-- 41 tests passing
+- 44 tests passing
 - 0 failures
 
 ## License
