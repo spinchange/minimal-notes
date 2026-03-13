@@ -161,6 +161,33 @@ function Get-RelativeTemplatePath {
     return [System.IO.Path]::GetRelativePath($Script:TemplateRoot, $Path)
 }
 
+function Resolve-ChildPathWithinRoot {
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [string]$ChildPath,
+        [Parameter(Mandatory)][string]$Label
+    )
+
+    $rootFullPath = [System.IO.Path]::GetFullPath($Root)
+    $candidatePath = if ([string]::IsNullOrWhiteSpace($ChildPath)) {
+        $rootFullPath
+    } else {
+        [System.IO.Path]::GetFullPath((Join-Path $rootFullPath $ChildPath))
+    }
+
+    $rootWithSeparator = if ($rootFullPath.EndsWith([System.IO.Path]::DirectorySeparatorChar) -or $rootFullPath.EndsWith([System.IO.Path]::AltDirectorySeparatorChar)) {
+        $rootFullPath
+    } else {
+        $rootFullPath + [System.IO.Path]::DirectorySeparatorChar
+    }
+
+    if ($candidatePath -cne $rootFullPath -and -not $candidatePath.StartsWith($rootWithSeparator, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "$Label must stay within the vault."
+    }
+
+    return $candidatePath
+}
+
 function Normalize-NoteReference {
     param([Parameter(Mandatory)][string]$Reference)
 
@@ -322,7 +349,7 @@ function Get-PlannedNotePath {
     $leafName = Split-Path -Path $relativeName -Leaf
     $parentDir = Split-Path -Path $relativeName -Parent
     $slug = ConvertTo-NoteSlug -Name $leafName
-    $targetDir = if ([string]::IsNullOrWhiteSpace($parentDir)) { $Script:VaultRoot } else { Join-Path $Script:VaultRoot $parentDir }
+    $targetDir = Resolve-ChildPathWithinRoot -Root $Script:VaultRoot -ChildPath $parentDir -Label "Note path"
 
     return Join-Path $targetDir "$slug.md"
 }
@@ -1146,6 +1173,78 @@ function Update-LinksInContent {
 
         return "[[{0}]]" -f $NewTarget
     })
+}
+
+function Update-RenamedNoteAliases {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$OldTitle,
+        [Parameter(Mandatory)][string]$OldRelativePath,
+        [Parameter(Mandatory)][string]$NewTitle,
+        [Parameter(Mandatory)][string]$NewRelativePath
+    )
+
+    $frontmatter = Get-Frontmatter -Path $Path
+    if (-not $frontmatter.HasFrontmatter) {
+        return
+    }
+
+    $properties = [ordered]@{}
+    foreach ($entry in $frontmatter.Properties.GetEnumerator()) {
+        $properties[$entry.Key] = $entry.Value
+    }
+
+    $newCanonicalKeys = @(
+        $NewTitle,
+        [System.IO.Path]::GetFileNameWithoutExtension($Path),
+        $NewRelativePath
+    ) |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        ForEach-Object { Normalize-NoteReference -Reference $_ } |
+        Sort-Object -Unique
+
+    $aliasValues = New-Object System.Collections.Generic.List[string]
+    $seenAliases = @{}
+    foreach ($alias in @($properties["aliases"])) {
+        if ([string]::IsNullOrWhiteSpace($alias)) {
+            continue
+        }
+
+        $normalizedAlias = Normalize-NoteReference -Reference $alias
+        if ($normalizedAlias -in $newCanonicalKeys -or $seenAliases.ContainsKey($normalizedAlias)) {
+            continue
+        }
+
+        $aliasValues.Add($alias)
+        $seenAliases[$normalizedAlias] = $true
+    }
+
+    $aliasCandidates = @($OldTitle)
+    if ($OldRelativePath.Contains('/')) {
+        $aliasCandidates += $OldRelativePath
+    }
+
+    foreach ($candidate in $aliasCandidates) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            continue
+        }
+
+        $normalizedCandidate = Normalize-NoteReference -Reference $candidate
+        if ($normalizedCandidate -in $newCanonicalKeys -or $seenAliases.ContainsKey($normalizedCandidate)) {
+            continue
+        }
+
+        $aliasValues.Add($candidate)
+        $seenAliases[$normalizedCandidate] = $true
+    }
+
+    if ($aliasValues.Count -gt 0) {
+        $properties["aliases"] = @($aliasValues)
+    } elseif ($properties.Contains("aliases")) {
+        $properties.Remove("aliases")
+    }
+
+    Set-Frontmatter -Path $Path -Properties $properties
 }
 
 function Get-HeadingMatch {
@@ -2263,6 +2362,7 @@ function Rename-Note {
         throw "Note not found: $OldName"
     }
 
+    $oldRelativePath = Get-LinkReferenceForPath -Path $oldPath
     $newPath = Get-PlannedNotePath -Name $NewName
     if ($oldPath -ne $newPath -and (Test-Path -LiteralPath $newPath)) {
         throw "Target note already exists: $newPath"
@@ -2303,6 +2403,8 @@ function Rename-Note {
     if ($updatedRenamedContent -cne $renamedContent) {
         Set-Content -LiteralPath $newPath -Value $updatedRenamedContent -Encoding utf8
     }
+
+    Update-RenamedNoteAliases -Path $newPath -OldTitle $oldTitle -OldRelativePath $oldRelativePath -NewTitle $newLeafName -NewRelativePath $newLinkTarget
 
     Get-ChildItem -LiteralPath $Script:VaultRoot -Recurse -File -Filter "*.md" |
         Where-Object { $_.FullName -ne $newPath } |

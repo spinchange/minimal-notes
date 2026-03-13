@@ -1053,6 +1053,56 @@ Describe "Minimal Notes CLI" {
         $content | Should -Match "^# New Note"
     }
 
+    It "renames a note into a folder and adds old title and path aliases" {
+        $oldPath = Join-Path $script:VaultPath "projects\\old-note.md"
+        $sourcePath = Join-Path $script:VaultPath "source.md"
+        New-Item -ItemType Directory -Path (Split-Path -Parent $oldPath) -Force | Out-Null
+
+        Set-Content -LiteralPath $oldPath -Value @(
+            "---",
+            "aliases:",
+            "  - Existing Alias",
+            "---",
+            "",
+            "# Old Note",
+            "",
+            "Self link to [[projects/old-note]]."
+        )
+        Set-Content -LiteralPath $sourcePath -Value @(
+            "# Source",
+            "",
+            "Link to [[Old Note]] and [[projects/old-note]]."
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("rename", "projects/old-note", "archive/New Note")
+        $newPath = Join-Path (Join-Path $script:VaultPath "archive") "new-note.md"
+        $renamedContent = Get-Content -LiteralPath $newPath -Raw
+        $sourceNote = Get-Content -LiteralPath $sourcePath -Raw
+
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Be $newPath
+        (Test-Path -LiteralPath $newPath) | Should -Be $true
+        $renamedContent | Should -Match "Existing Alias"
+        $renamedContent | Should -Match "Old Note"
+        $renamedContent | Should -Match "projects/old-note"
+        $sourceNote | Should -Match "\[\[archive/new-note\]\]"
+        $sourceNote | Should -Not -Match "\[\[Old Note\]\]"
+        $sourceNote | Should -Not -Match "\[\[projects/old-note\]\]"
+    }
+
+    It "rejects renames that would move a note outside the vault" {
+        $oldPath = Join-Path $script:VaultPath "old-note.md"
+        Set-Content -LiteralPath $oldPath -Value @(
+            "# Old Note"
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("rename", "Old Note", "..\\escape")
+
+        $result.ExitCode | Should -Not -Be 0
+        $result.Text | Should -Match "must stay within the vault"
+        (Test-Path -LiteralPath $oldPath) | Should -Be $true
+    }
+
     It "reports an ambiguous fuzzy note match instead of creating a new note silently" {
         Set-Content -LiteralPath (Join-Path $script:VaultPath "terminal-ui.md") -Value @("# Terminal UI")
         Set-Content -LiteralPath (Join-Path $script:VaultPath "terminal-usage.md") -Value @("# Terminal Usage")
