@@ -17,7 +17,7 @@ function script:Remove-TestVault {
     }
 }
 
-function script:Invoke-NoteCli {
+function script:Invoke-NoteCliSubprocess {
     param(
         [string]$VaultPath,
         [string]$TemplatesPath,
@@ -34,6 +34,46 @@ function script:Invoke-NoteCli {
 
     $output = & pwsh -NoProfile -File $global:MinimalNotes_ScriptPath @Arguments 2>&1
     $exitCode = $LASTEXITCODE
+
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        Output   = @($output)
+        Text     = (@($output) -join [Environment]::NewLine).Trim()
+    }
+}
+
+function script:Invoke-NoteCli {
+    param(
+        [string]$VaultPath,
+        [string]$TemplatesPath,
+        [string[]]$Arguments
+    )
+
+    $originalVault = $env:MINIMAL_NOTES_VAULT
+    $originalTemplates = $env:MINIMAL_NOTES_TEMPLATES
+    $originalNoOpen = $env:MINIMAL_NOTES_NO_OPEN
+
+    $env:MINIMAL_NOTES_VAULT = $VaultPath
+    $env:MINIMAL_NOTES_NO_OPEN = "1"
+    if ($TemplatesPath) {
+        $env:MINIMAL_NOTES_TEMPLATES = $TemplatesPath
+    } else {
+        Remove-Item Env:MINIMAL_NOTES_TEMPLATES -ErrorAction SilentlyContinue
+    }
+
+    try {
+        $command = if ($Arguments.Count -gt 0) { $Arguments[0] } else { "help" }
+        $commandArgs = if ($Arguments.Count -gt 1) { @($Arguments[1..($Arguments.Count - 1)]) } else { @() }
+        $output = @(Invoke-MinimalNotesCli -Command $command -Arguments $commandArgs 2>&1)
+        $exitCode = 0
+    } catch {
+        $output = @($_.Exception.Message)
+        $exitCode = 1
+    } finally {
+        if ($null -ne $originalVault) { $env:MINIMAL_NOTES_VAULT = $originalVault } else { Remove-Item Env:MINIMAL_NOTES_VAULT -ErrorAction SilentlyContinue }
+        if ($null -ne $originalTemplates) { $env:MINIMAL_NOTES_TEMPLATES = $originalTemplates } else { Remove-Item Env:MINIMAL_NOTES_TEMPLATES -ErrorAction SilentlyContinue }
+        if ($null -ne $originalNoOpen) { $env:MINIMAL_NOTES_NO_OPEN = $originalNoOpen } else { Remove-Item Env:MINIMAL_NOTES_NO_OPEN -ErrorAction SilentlyContinue }
+    }
 
     return [pscustomobject]@{
         ExitCode = $exitCode
@@ -66,6 +106,10 @@ function script:Invoke-InteractivePick {
 }
 
 Describe "Minimal Notes CLI" {
+    BeforeAll {
+        Import-Module $global:MinimalNotes_ModuleManifestPath -Force -ErrorAction Stop
+    }
+
     BeforeEach {
         $script:VaultPath = New-TestVault
     }
@@ -78,11 +122,18 @@ Describe "Minimal Notes CLI" {
     }
 
     It "creates a note with new" {
-        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("new", "Project Ideas")
+        $result = Invoke-NoteCliSubprocess -VaultPath $script:VaultPath -Arguments @("new", "Project Ideas")
 
         $result.ExitCode | Should -Be 0
         (Test-Path -LiteralPath (Join-Path $script:VaultPath "project-ideas.md")) | Should -Be $true
         (Get-Content -LiteralPath (Join-Path $script:VaultPath "project-ideas.md") -Raw) | Should -Match "# Project Ideas"
+    }
+
+    It "wraps the module through the note.ps1 CLI script" {
+        $result = Invoke-NoteCliSubprocess -VaultPath $script:VaultPath -Arguments @("path")
+
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Be $script:VaultPath
     }
 
     It "imports the module manifest and exposes the CLI entry point" {
