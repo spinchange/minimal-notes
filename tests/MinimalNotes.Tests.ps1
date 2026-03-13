@@ -792,6 +792,44 @@ Describe "Minimal Notes CLI" {
         $content | Should -Match "tags:"
     }
 
+    It "can unset an existing frontmatter property" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "project.md") -Value @(
+            "---",
+            "status: active",
+            "priority: high",
+            "---",
+            "",
+            "# Project"
+        )
+
+        $unset = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("props", "project", "unset", "priority")
+        $show = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("props", "project")
+        $content = Get-Content -LiteralPath (Join-Path $script:VaultPath "project.md") -Raw
+
+        $unset.ExitCode | Should -Be 0
+        $show.ExitCode | Should -Be 0
+        $show.Text | Should -Match "status: active"
+        $show.Text | Should -Not -Match "priority:"
+        $content | Should -Not -Match "priority:"
+    }
+
+    It "validates structured property values" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "project.md") -Value @(
+            "# Project"
+        )
+
+        $badStatus = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("props", "project", "set", "status", "flying")
+        $badPriority = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("props", "project", "set", "priority", "extreme")
+        $badDue = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("props", "project", "set", "due", "not-a-date")
+
+        $badStatus.ExitCode | Should -Be 1
+        $badStatus.Text | Should -Match "Invalid status"
+        $badPriority.ExitCode | Should -Be 1
+        $badPriority.Text | Should -Match "Invalid priority"
+        $badDue.ExitCode | Should -Be 1
+        $badDue.Text | Should -Match "Invalid due date"
+    }
+
     It "reads frontmatter correctly when the file starts with a UTF-8 BOM" {
         $path = Join-Path $script:VaultPath "bom-note.md"
         $bom = [char]0xFEFF

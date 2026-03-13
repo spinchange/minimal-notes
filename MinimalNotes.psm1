@@ -833,6 +833,83 @@ function Format-PropertyValue {
     return [string]$Value
 }
 
+function Normalize-PropertyKey {
+    param([Parameter(Mandatory)][string]$Key)
+
+    $normalized = $Key.Trim().ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($normalized)) {
+        throw "Property key is required."
+    }
+
+    return $normalized
+}
+
+function Test-PropertyValueDate {
+    param([Parameter(Mandatory)][string]$Value)
+
+    return $null -ne (Try-ParseAgendaDate -Value $Value)
+}
+
+function Get-ValidatedPropertyValues {
+    param(
+        [Parameter(Mandatory)][string]$Key,
+        [string[]]$Values,
+        [switch]$AllowEmpty
+    )
+
+    $normalizedKey = Normalize-PropertyKey -Key $Key
+    $rawText = ($Values -join " ").Trim()
+    if (-not $AllowEmpty -and [string]::IsNullOrWhiteSpace($rawText)) {
+        throw "Property value is required."
+    }
+
+    $items = if ($normalizedKey -in @("tags", "aliases")) {
+        @($rawText -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    } elseif ($AllowEmpty -and [string]::IsNullOrWhiteSpace($rawText)) {
+        @()
+    } else {
+        @($rawText)
+    }
+
+    switch ($normalizedKey) {
+        "status" {
+            $valid = @("open", "active", "in-progress", "blocked", "waiting", "done", "completed", "cancelled", "canceled", "archived")
+            foreach ($item in $items) {
+                if ($item.Trim().ToLowerInvariant() -notin $valid) {
+                    throw ("Invalid status '{0}'. Valid values: {1}" -f $item, ($valid -join ", "))
+                }
+            }
+        }
+        "priority" {
+            $valid = @("low", "medium", "normal", "high", "urgent")
+            foreach ($item in $items) {
+                if ($item.Trim().ToLowerInvariant() -notin $valid) {
+                    throw ("Invalid priority '{0}'. Valid values: {1}" -f $item, ($valid -join ", "))
+                }
+            }
+        }
+        { $_ -in @("due", "scheduled") } {
+            foreach ($item in $items) {
+                if (-not (Test-PropertyValueDate -Value $item)) {
+                    throw ("Invalid {0} date '{1}'. Use a parseable date like YYYY-MM-DD." -f $normalizedKey, $item)
+                }
+            }
+        }
+        { $_ -in @("tags", "aliases") } {
+            foreach ($item in $items) {
+                if ([string]::IsNullOrWhiteSpace($item)) {
+                    throw ("{0} values cannot be empty." -f $normalizedKey)
+                }
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        Key    = $normalizedKey
+        Values = @($items)
+    }
+}
+
 function Show-Properties {
     param([Parameter(Mandatory)][string]$Name)
 
@@ -865,11 +942,11 @@ function Set-PropertyValue {
         $properties[$entry.Key] = $entry.Value
     }
 
-    $valueText = Require-Argument -Values $Values -Message "Property value is required."
-    if ($Key -in @("tags", "aliases")) {
-        $properties[$Key] = @($valueText -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $validated = Get-ValidatedPropertyValues -Key $Key -Values $Values
+    if ($validated.Key -in @("tags", "aliases")) {
+        $properties[$validated.Key] = @($validated.Values)
     } else {
-        $properties[$Key] = $valueText
+        $properties[$validated.Key] = @($validated.Values)[0]
     }
 
     Set-Frontmatter -Path $path -Properties $properties
@@ -894,9 +971,9 @@ function Add-PropertyValue {
         $properties[$entry.Key] = $entry.Value
     }
 
-    $items = @((Require-Argument -Values $Values -Message "Property value is required.") -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-    $existing = @($properties[$Key])
-    $properties[$Key] = @($existing + $items | Sort-Object -Unique)
+    $validated = Get-ValidatedPropertyValues -Key $Key -Values $Values
+    $existing = @($properties[$validated.Key])
+    $properties[$validated.Key] = @($existing + $validated.Values | Sort-Object -Unique)
     Set-Frontmatter -Path $path -Properties $properties
     Write-Output $path
 }
@@ -919,14 +996,40 @@ function Remove-PropertyValue {
         $properties[$entry.Key] = $entry.Value
     }
 
-    $itemsToRemove = @((Require-Argument -Values $Values -Message "Property value is required.") -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-    $remaining = @($properties[$Key] | Where-Object { $_ -notin $itemsToRemove })
+    $validated = Get-ValidatedPropertyValues -Key $Key -Values $Values
+    $remaining = @($properties[$validated.Key] | Where-Object { $_ -notin $validated.Values })
     if ($remaining.Count -eq 0) {
-        if ($properties.Contains($Key)) {
-            $properties.Remove($Key)
+        if ($properties.Contains($validated.Key)) {
+            $properties.Remove($validated.Key)
         }
     } else {
-        $properties[$Key] = $remaining
+        $properties[$validated.Key] = $remaining
+    }
+
+    Set-Frontmatter -Path $path -Properties $properties
+    Write-Output $path
+}
+
+function Unset-PropertyValue {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$Key
+    )
+
+    $path = Resolve-Note -Name $Name
+    if (-not $path) {
+        throw "Note not found: $Name"
+    }
+
+    $frontmatter = Get-Frontmatter -Path $path
+    $properties = [ordered]@{}
+    foreach ($entry in $frontmatter.Properties.GetEnumerator()) {
+        $properties[$entry.Key] = $entry.Value
+    }
+
+    $normalizedKey = Normalize-PropertyKey -Key $Key
+    if ($properties.Contains($normalizedKey)) {
+        $properties.Remove($normalizedKey)
     }
 
     Set-Frontmatter -Path $path -Properties $properties
@@ -1280,6 +1383,7 @@ Usage:
   ./note.ps1 template new meeting
   ./note.ps1 props "My Note"
   ./note.ps1 props "My Note" set status active
+  ./note.ps1 props "My Note" unset status
   ./note.ps1 props "My Note" add tags work,planning
   ./note.ps1 rename "Old Note" "New Note"
   ./note.ps1 unresolved
@@ -1315,7 +1419,7 @@ Commands:
   split      Split a heading section into a new linked note.
   repair-links Attempt to repair unresolved wiki links using fuzzy note matches.
   template   List, preview, or create note templates in templates/.
-  props      Read or update frontmatter properties for a note.
+  props      Read or update frontmatter properties for a note, including unset and validation.
   rename     Rename a note file and update wiki links that point to it.
   unresolved List unresolved wiki links across the vault or in one note.
   create-unresolved  Create notes for one unresolved link target or all missing targets.
@@ -2464,7 +2568,7 @@ function Invoke-MinimalNotesCli {
         }
         "props" {
             if ($Arguments.Count -eq 0) {
-                throw "Usage: ./note.ps1 props `"My Note`" [set|add|remove] [key] [value]"
+                throw "Usage: ./note.ps1 props `"My Note`" [set|add|remove|unset] [key] [value]"
             }
 
             $name = $Arguments[0]
@@ -2473,18 +2577,37 @@ function Invoke-MinimalNotesCli {
                 break
             }
 
-            if ($Arguments.Count -lt 4) {
-                throw "Usage: ./note.ps1 props `"My Note`" [set|add|remove] [key] [value]"
-            }
-
             $action = $Arguments[1].Trim().ToLowerInvariant()
             $key = $Arguments[2].Trim()
-            $values = @($Arguments[3..($Arguments.Count - 1)])
 
             switch ($action) {
-                "set" { Set-PropertyValue -Name $name -Key $key -Values $values }
-                "add" { Add-PropertyValue -Name $name -Key $key -Values $values }
-                "remove" { Remove-PropertyValue -Name $name -Key $key -Values $values }
+                "unset" {
+                    if ($Arguments.Count -ne 3) {
+                        throw "Usage: ./note.ps1 props `"My Note`" unset [key]"
+                    }
+                    Unset-PropertyValue -Name $name -Key $key
+                }
+                "set" {
+                    if ($Arguments.Count -lt 4) {
+                        throw "Usage: ./note.ps1 props `"My Note`" set [key] [value]"
+                    }
+                    $values = @($Arguments[3..($Arguments.Count - 1)])
+                    Set-PropertyValue -Name $name -Key $key -Values $values
+                }
+                "add" {
+                    if ($Arguments.Count -lt 4) {
+                        throw "Usage: ./note.ps1 props `"My Note`" add [key] [value]"
+                    }
+                    $values = @($Arguments[3..($Arguments.Count - 1)])
+                    Add-PropertyValue -Name $name -Key $key -Values $values
+                }
+                "remove" {
+                    if ($Arguments.Count -lt 4) {
+                        throw "Usage: ./note.ps1 props `"My Note`" remove [key] [value]"
+                    }
+                    $values = @($Arguments[3..($Arguments.Count - 1)])
+                    Remove-PropertyValue -Name $name -Key $key -Values $values
+                }
                 default { throw "Unknown props action: $action" }
             }
         }

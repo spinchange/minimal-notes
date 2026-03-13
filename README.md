@@ -29,7 +29,7 @@ This project aims for the useful core of Obsidian without the heavyweight app sh
 - weekly and monthly notes
 - related-note suggestions and Mermaid graph output
 - merge, split, and repair-link refactoring tools
-- frontmatter properties, tags, and aliases
+- frontmatter properties, tags, aliases, and validation
 - safe note rename with automatic link updates
 - terminal preview
 
@@ -46,6 +46,7 @@ pwsh -NoProfile -File .\note.ps1 new "Sprint Review" --template meeting
 pwsh -NoProfile -File .\note.ps1 dashboard
 pwsh -NoProfile -File .\note.ps1 weekly
 pwsh -NoProfile -File .\note.ps1 merge "Draft" "Project Archive"
+pwsh -NoProfile -File .\note.ps1 props "Project Ideas" unset priority
 pwsh -NoProfile -File .\note.ps1 tasks
 pwsh -NoProfile -File .\note.ps1 tasks today
 pwsh -NoProfile -File .\note.ps1 props "Project Ideas" set status active
@@ -191,6 +192,7 @@ pwsh -NoProfile -File .\note.ps1 props "Project Ideas"
 pwsh -NoProfile -File .\note.ps1 props "Project Ideas" set status active
 pwsh -NoProfile -File .\note.ps1 props "Project Ideas" add tags work,planning
 pwsh -NoProfile -File .\note.ps1 props "Project Ideas" add aliases "Idea Bank"
+pwsh -NoProfile -File .\note.ps1 props "Project Ideas" unset priority
 ```
 
 Frontmatter looks like:
@@ -205,6 +207,12 @@ aliases:
   - Idea Bank
 ---
 ```
+
+Built-in validation currently covers:
+
+- `status`: `open`, `active`, `in-progress`, `blocked`, `waiting`, `done`, `completed`, `cancelled`, `canceled`, `archived`
+- `priority`: `low`, `medium`, `normal`, `high`, `urgent`
+- `due` and `scheduled`: parseable dates like `2026-03-20`
 
 Agenda reads frontmatter like:
 
@@ -274,7 +282,7 @@ Focus: turn frontmatter into day-to-day utility.
 - ~~`agenda` driven by fields like `due`, `scheduled`, `status`, and `priority`~~
 - ~~smarter `tasks` that include note context such as project, status, and priority~~
 - ~~note templates for common frontmatter and note shapes~~
-- better `props` support, including `unset`, clearer list editing, and stronger validation
+- ~~better `props` support, including `unset`, clearer list editing, and stronger validation~~
 - ~~weekly and monthly note workflows built on top of the existing daily note model~~
 
 ### Phase 2: Retrieval and structure
@@ -333,7 +341,7 @@ Install-Module Pester -Scope CurrentUser -Force -SkipPublisherCheck
 
 Current local status:
 
-- 44 tests passing
+- 47 tests passing
 - 0 failures
 
 ## License

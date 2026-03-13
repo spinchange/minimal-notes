@@ -23,6 +23,8 @@ All notable changes to this project are documented here.
 - `merge` command to combine notes and rewrite inbound links
 - `split` command to extract a heading section into a new linked note
 - `repair-links` command to repair unresolved links when there is a clear fuzzy match
+- `props unset` command for removing frontmatter keys cleanly
+- validation for structured frontmatter fields like `status`, `priority`, `due`, and `scheduled`
 
 ### Changed
 
@@ -62,6 +64,7 @@ All notable changes to this project are documented here.
 - daily, weekly, and monthly note workflows
 - related-note suggestions and Mermaid graph output
 - merge, split, and repair-link refactoring workflows
+- stronger validated property workflows for frontmatter editing
 
 ### Quality and reliability
 
@@ -74,6 +77,7 @@ All notable changes to this project are documented here.
 - module import smoke coverage
 - broader workflow coverage for dashboard, report/review, calendar notes, and graph tooling
 - regression coverage for merge, split, and link-repair commands
+- regression coverage for props unset and validation rules
 
 ### Repository polish
 
