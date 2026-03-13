@@ -570,6 +570,70 @@ function Get-Tasks {
     }
 }
 
+function Try-ParseAgendaDate {
+    param([string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $null
+    }
+
+    try {
+        return [datetime]::Parse($Value)
+    } catch {
+        return $null
+    }
+}
+
+function Get-AgendaItems {
+    param([ValidateSet("active", "today", "overdue", "all")][string]$Mode = "active")
+
+    $today = (Get-Date).Date
+    $closedStatuses = @("done", "completed", "cancelled", "canceled", "archived")
+
+    foreach ($note in @(Get-AllNotes)) {
+        $properties = $note.Properties
+        $dueDate = Try-ParseAgendaDate -Value ([string]$properties["due"])
+        $scheduledDate = Try-ParseAgendaDate -Value ([string]$properties["scheduled"])
+        $status = ([string]$properties["status"]).Trim().ToLowerInvariant()
+        $priority = ([string]$properties["priority"]).Trim()
+
+        if (-not $dueDate -and -not $scheduledDate) {
+            continue
+        }
+
+        if ($Mode -ne "all" -and $status -and $status -in $closedStatuses) {
+            continue
+        }
+
+        $anchorDate = if ($scheduledDate) { $scheduledDate.Date } else { $dueDate.Date }
+        $isOverdue = $dueDate -and ($dueDate.Date -lt $today)
+        $isToday = ($scheduledDate -and $scheduledDate.Date -eq $today) -or ($dueDate -and $dueDate.Date -eq $today)
+
+        $includeItem = switch ($Mode) {
+            "today" { $isToday }
+            "overdue" { $isOverdue }
+            "active" { -not ($anchorDate -lt $today -and -not $isOverdue) }
+            default { $true }
+        }
+
+        if (-not $includeItem) {
+            continue
+        }
+
+        [pscustomobject]@{
+            Title      = $note.Title
+            Path       = $note.RelativePath
+            Due        = $dueDate
+            Scheduled  = $scheduledDate
+            Status     = if ($status) { $status } else { "open" }
+            Priority   = $priority
+            AnchorDate = $anchorDate
+            IsOverdue  = [bool]$isOverdue
+            IsToday    = [bool]$isToday
+        }
+    }
+}
+
 function Get-LinkMatcherKeys {
     param([Parameter(Mandatory)][string]$Path)
 
@@ -743,6 +807,9 @@ Usage:
   ./note.ps1 orphans
   ./note.ps1 recent
   ./note.ps1 recent 5
+  ./note.ps1 agenda
+  ./note.ps1 agenda today
+  ./note.ps1 agenda overdue
   ./note.ps1 tasks
   ./note.ps1 tasks all
   ./note.ps1 tasks done
@@ -772,6 +839,7 @@ Commands:
   capture    Append a quick note to inbox.md or today's daily note.
   orphans    List notes with no inbound wiki links.
   recent     List recently modified notes, newest first.
+  agenda     Show notes with due or scheduled frontmatter dates.
   tasks      Collect markdown checkbox tasks across the vault.
   props      Read or update frontmatter properties for a note.
   rename     Rename a note file and update wiki links that point to it.
@@ -1016,6 +1084,40 @@ function Show-RecentNotes {
         Select-Object -First $limit |
         ForEach-Object {
             "{0}  {1}  {2}" -f $_.LastWrite.ToString("yyyy-MM-dd HH:mm"), $_.Title, $_.RelativePath
+        }
+}
+
+function Show-Agenda {
+    param([string]$ModeText)
+
+    $mode = if ($ModeText) { $ModeText.Trim().ToLowerInvariant() } else { "active" }
+    if ($mode -notin @("active", "today", "overdue", "all")) {
+        throw "Agenda filter must be one of: active, today, overdue, all."
+    }
+
+    Get-AgendaItems -Mode $mode |
+        Sort-Object @{ Expression = "AnchorDate"; Descending = $false }, @{ Expression = "Title"; Descending = $false } |
+        ForEach-Object {
+            $dateParts = @()
+            if ($_.Scheduled) {
+                $dateParts += ("scheduled {0}" -f $_.Scheduled.ToString("yyyy-MM-dd"))
+            }
+            if ($_.Due) {
+                $dateParts += ("due {0}" -f $_.Due.ToString("yyyy-MM-dd"))
+            }
+
+            $suffixParts = @()
+            $suffixParts += $_.Status
+            if ($_.Priority) {
+                $suffixParts += ("priority {0}" -f $_.Priority)
+            }
+            if ($_.IsOverdue) {
+                $suffixParts += "overdue"
+            } elseif ($_.IsToday) {
+                $suffixParts += "today"
+            }
+
+            "{0}  {1}  [{2}]  {3}" -f $_.Title, $_.Path, ($dateParts -join "; "), ($suffixParts -join ", ")
         }
 }
 
@@ -1276,6 +1378,10 @@ try {
         "recent" {
             $limit = if ($Args.Count -gt 0) { $Args -join " " } else { $null }
             Show-RecentNotes -LimitText $limit
+        }
+        "agenda" {
+            $mode = if ($Args.Count -gt 0) { $Args -join " " } else { $null }
+            Show-Agenda -ModeText $mode
         }
         "tasks" {
             $state = if ($Args.Count -gt 0) { $Args -join " " } else { $null }

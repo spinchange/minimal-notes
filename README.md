@@ -22,6 +22,7 @@ This project aims for the useful core of Obsidian without the heavyweight app sh
 - wiki links, backlinks, and unresolved-link detection
 - quick capture to inbox or daily notes
 - orphan and recent note views
+- agenda from frontmatter dates
 - task collection from markdown checkboxes
 - frontmatter properties, tags, and aliases
 - safe note rename with automatic link updates
@@ -70,6 +71,7 @@ pick       Interactively choose a note to open.
 capture    Append a quick note to inbox.md or today's daily note.
 orphans    List notes with no inbound wiki links.
 recent     List recently modified notes, newest first.
+agenda     Show notes with due or scheduled frontmatter dates.
 tasks      Collect markdown checkbox tasks across the vault.
 props      Read or update frontmatter properties for a note.
 rename     Rename a note file and update wiki links that point to it.
@@ -128,6 +130,7 @@ pwsh -NoProfile -File .\note.ps1 capture "remember to simplify the picker"
 pwsh -NoProfile -File .\note.ps1 capture daily "ship the prototype"
 pwsh -NoProfile -File .\note.ps1 orphans
 pwsh -NoProfile -File .\note.ps1 recent 5
+pwsh -NoProfile -File .\note.ps1 agenda
 pwsh -NoProfile -File .\note.ps1 tasks
 ```
 
@@ -153,6 +156,26 @@ aliases:
 ---
 ```
 
+Agenda reads frontmatter like:
+
+```md
+---
+status: active
+priority: high
+scheduled: 2026-03-14
+due: 2026-03-16
+---
+```
+
+Then:
+
+```powershell
+pwsh -NoProfile -File .\note.ps1 agenda
+pwsh -NoProfile -File .\note.ps1 agenda today
+pwsh -NoProfile -File .\note.ps1 agenda overdue
+pwsh -NoProfile -File .\note.ps1 agenda all
+```
+
 Maintain link structure:
 
 ```powershell
@@ -167,7 +190,7 @@ pwsh -NoProfile -File .\note.ps1 create-unresolved all
 
 Focus: turn frontmatter into day-to-day utility.
 
-- `agenda` driven by fields like `due`, `scheduled`, `status`, and `priority`
+- ~~`agenda` driven by fields like `due`, `scheduled`, `status`, and `priority`~~
 - smarter `tasks` that include note context such as project, status, and priority
 - better `props` support, including `unset`, clearer list editing, and stronger validation
 - note templates for common frontmatter and note shapes
@@ -204,7 +227,7 @@ Focus: keep the codebase maintainable as features expand.
 
 ### Suggested next build order
 
-1. `agenda`
+1. ~~`agenda`~~
 2. metadata-aware `tasks`
 3. templates
 4. module refactor
@@ -228,7 +251,7 @@ Install-Module Pester -Scope CurrentUser -Force -SkipPublisherCheck
 
 Current local status:
 
-- 24 tests passing
+- 29 tests passing
 - 0 failures
 
 ## License

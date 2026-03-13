@@ -256,6 +256,62 @@ Describe "Minimal Notes CLI" {
         $lines[1].ToString() | Should -Match "Second  second.md"
     }
 
+    It "shows active agenda items from scheduled and due frontmatter" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "project-a.md") -Value @(
+            "---",
+            "status: active",
+            "priority: high",
+            ("scheduled: {0}" -f (Get-Date).AddDays(1).ToString("yyyy-MM-dd")),
+            "---",
+            "",
+            "# Project A"
+        )
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "project-b.md") -Value @(
+            "---",
+            "status: completed",
+            ("due: {0}" -f (Get-Date).AddDays(2).ToString("yyyy-MM-dd")),
+            "---",
+            "",
+            "# Project B"
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("agenda")
+
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Match "Project A  project-a.md"
+        $result.Text | Should -Match "priority high"
+        $result.Text | Should -Not -Match "Project B"
+    }
+
+    It "filters agenda items for today and overdue views" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "today-note.md") -Value @(
+            "---",
+            ("scheduled: {0}" -f (Get-Date).ToString("yyyy-MM-dd")),
+            "---",
+            "",
+            "# Today Note"
+        )
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "overdue-note.md") -Value @(
+            "---",
+            ("due: {0}" -f (Get-Date).AddDays(-1).ToString("yyyy-MM-dd")),
+            "---",
+            "",
+            "# Overdue Note"
+        )
+
+        $todayResult = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("agenda", "today")
+        $overdueResult = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("agenda", "overdue")
+
+        $todayResult.ExitCode | Should -Be 0
+        $todayResult.Text | Should -Match "Today Note"
+        $todayResult.Text | Should -Not -Match "Overdue Note"
+
+        $overdueResult.ExitCode | Should -Be 0
+        $overdueResult.Text | Should -Match "Overdue Note"
+        $overdueResult.Text | Should -Match "overdue"
+        $overdueResult.Text | Should -Not -Match "Today Note"
+    }
+
     It "collects open tasks by default" {
         Set-Content -LiteralPath (Join-Path $script:VaultPath "tasks.md") -Value @(
             "# Tasks",
