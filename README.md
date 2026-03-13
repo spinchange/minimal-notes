@@ -23,7 +23,7 @@ This project aims for the useful core of Obsidian without the heavyweight app sh
 - quick capture to inbox or daily notes
 - orphan and recent note views
 - agenda from frontmatter dates
-- task collection from markdown checkboxes
+- metadata-aware task collection from markdown checkboxes
 - frontmatter properties, tags, and aliases
 - safe note rename with automatic link updates
 - terminal preview
@@ -37,6 +37,7 @@ pwsh -NoProfile -File .\note.ps1 help
 pwsh -NoProfile -File .\note.ps1 new "Project Ideas"
 pwsh -NoProfile -File .\note.ps1 capture "remember this"
 pwsh -NoProfile -File .\note.ps1 tasks
+pwsh -NoProfile -File .\note.ps1 tasks today
 pwsh -NoProfile -File .\note.ps1 props "Project Ideas" set status active
 pwsh -NoProfile -File .\run-tests.ps1
 ```
@@ -73,6 +74,7 @@ orphans    List notes with no inbound wiki links.
 recent     List recently modified notes, newest first.
 agenda     Show notes with due or scheduled frontmatter dates.
 tasks      Collect markdown checkbox tasks across the vault.
+          Supports open, done, all, today, and overdue views.
 props      Read or update frontmatter properties for a note.
 rename     Rename a note file and update wiki links that point to it.
 unresolved List unresolved wiki links across the vault or in one note.
@@ -132,6 +134,8 @@ pwsh -NoProfile -File .\note.ps1 orphans
 pwsh -NoProfile -File .\note.ps1 recent 5
 pwsh -NoProfile -File .\note.ps1 agenda
 pwsh -NoProfile -File .\note.ps1 tasks
+pwsh -NoProfile -File .\note.ps1 tasks today
+pwsh -NoProfile -File .\note.ps1 tasks overdue
 ```
 
 Read or update frontmatter properties:
@@ -174,7 +178,12 @@ pwsh -NoProfile -File .\note.ps1 agenda
 pwsh -NoProfile -File .\note.ps1 agenda today
 pwsh -NoProfile -File .\note.ps1 agenda overdue
 pwsh -NoProfile -File .\note.ps1 agenda all
+pwsh -NoProfile -File .\note.ps1 tasks
+pwsh -NoProfile -File .\note.ps1 tasks today
+pwsh -NoProfile -File .\note.ps1 tasks overdue
 ```
+
+Task output includes note context when available, such as `project`, `status`, `priority`, `scheduled`, and `due`.
 
 Maintain link structure:
 
@@ -191,7 +200,7 @@ pwsh -NoProfile -File .\note.ps1 create-unresolved all
 Focus: turn frontmatter into day-to-day utility.
 
 - ~~`agenda` driven by fields like `due`, `scheduled`, `status`, and `priority`~~
-- smarter `tasks` that include note context such as project, status, and priority
+- ~~smarter `tasks` that include note context such as project, status, and priority~~
 - better `props` support, including `unset`, clearer list editing, and stronger validation
 - note templates for common frontmatter and note shapes
 - weekly and monthly note workflows built on top of the existing daily note model
@@ -228,7 +237,7 @@ Focus: keep the codebase maintainable as features expand.
 ### Suggested next build order
 
 1. ~~`agenda`~~
-2. metadata-aware `tasks`
+2. ~~metadata-aware `tasks`~~
 3. templates
 4. module refactor
 5. dashboards or reports
@@ -251,7 +260,7 @@ Install-Module Pester -Scope CurrentUser -Force -SkipPublisherCheck
 
 Current local status:
 
-- 29 tests passing
+- 32 tests passing
 - 0 failures
 
 ## License

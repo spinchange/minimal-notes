@@ -349,6 +349,97 @@ Describe "Minimal Notes CLI" {
         $allResult.Text | Should -Match "Finished task"
     }
 
+    It "includes note metadata context in task output" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "project-a.md") -Value @(
+            "---",
+            "project: Website Refresh",
+            "status: active",
+            "priority: high",
+            "due: 2026-03-15",
+            "scheduled: 2026-03-13",
+            "---",
+            "",
+            "# Project A",
+            "",
+            "- [ ] Review landing page copy"
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("tasks")
+
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Match "Review landing page copy"
+        $result.Text | Should -Match "project Website Refresh"
+        $result.Text | Should -Match "status active"
+        $result.Text | Should -Match "priority high"
+        $result.Text | Should -Match "scheduled 2026-03-13"
+        $result.Text | Should -Match "due 2026-03-15"
+    }
+
+    It "filters open tasks for today based on note frontmatter dates" {
+        $today = (Get-Date).ToString("yyyy-MM-dd")
+        $tomorrow = (Get-Date).AddDays(1).ToString("yyyy-MM-dd")
+
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "today-task.md") -Value @(
+            "---",
+            ("scheduled: {0}" -f $today),
+            "status: active",
+            "---",
+            "",
+            "# Today Task",
+            "",
+            "- [ ] Follow up today"
+        )
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "later-task.md") -Value @(
+            "---",
+            ("due: {0}" -f $tomorrow),
+            "---",
+            "",
+            "# Later Task",
+            "",
+            "- [ ] Handle later"
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("tasks", "today")
+
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Match "Follow up today"
+        $result.Text | Should -Match "scheduled $today"
+        $result.Text | Should -Not -Match "Handle later"
+    }
+
+    It "filters overdue tasks based on note due dates" {
+        $yesterday = (Get-Date).AddDays(-1).ToString("yyyy-MM-dd")
+        $today = (Get-Date).ToString("yyyy-MM-dd")
+
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "overdue-task.md") -Value @(
+            "---",
+            ("due: {0}" -f $yesterday),
+            "priority: urgent",
+            "---",
+            "",
+            "# Overdue Task",
+            "",
+            "- [ ] Fix overdue item"
+        )
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "today-task.md") -Value @(
+            "---",
+            ("due: {0}" -f $today),
+            "---",
+            "",
+            "# Today Task",
+            "",
+            "- [ ] Fix today item"
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("tasks", "overdue")
+
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Match "Fix overdue item"
+        $result.Text | Should -Match "due $yesterday"
+        $result.Text | Should -Match "priority urgent"
+        $result.Text | Should -Not -Match "Fix today item"
+    }
+
     It "reads and updates frontmatter properties" {
         Set-Content -LiteralPath (Join-Path $script:VaultPath "project.md") -Value @(
             "# Project"

@@ -541,30 +541,57 @@ function Get-NoteTags {
 }
 
 function Get-Tasks {
-    param([ValidateSet("open", "done", "all")][string]$State = "open")
+    param([ValidateSet("open", "done", "all", "today", "overdue")][string]$State = "open")
 
     $notes = @(Get-AllNotes)
+    $today = (Get-Date).Date
     foreach ($note in $notes) {
+        $properties = $note.Properties
+        $noteStatus = ([string]$properties["status"]).Trim().ToLowerInvariant()
+        $priority = ([string]$properties["priority"]).Trim()
+        $project = if ($properties["project"]) { [string]$properties["project"] } else { $note.Title }
+        $dueDate = Try-ParseAgendaDate -Value ([string]$properties["due"])
+        $scheduledDate = Try-ParseAgendaDate -Value ([string]$properties["scheduled"])
+
         $lineNumber = 0
         foreach ($line in (Get-Content -LiteralPath $note.Path)) {
             $lineNumber++
-            if ($line -notmatch '^\s*[-*]\s+\[( |x|X)\]\s+(.+)$') {
+            $taskMatch = [regex]::Match($line, '^\s*[-*]\s+\[( |x|X)\]\s+(.+)$')
+            if (-not $taskMatch.Success) {
                 continue
             }
 
-            $isDone = $matches[1].ToLowerInvariant() -eq "x"
+            $isDone = $taskMatch.Groups[1].Value.ToLowerInvariant() -eq "x"
             if ($State -eq "open" -and $isDone) {
                 continue
             }
             if ($State -eq "done" -and -not $isDone) {
                 continue
             }
+            if ($State -eq "today") {
+                $isToday = ($scheduledDate -and $scheduledDate.Date -eq $today) -or ($dueDate -and $dueDate.Date -eq $today)
+                if ($isDone -or -not $isToday) {
+                    continue
+                }
+            }
+            if ($State -eq "overdue") {
+                $isOverdue = $dueDate -and ($dueDate.Date -lt $today)
+                if ($isDone -or -not $isOverdue) {
+                    continue
+                }
+            }
 
             [pscustomobject]@{
-                State = if ($isDone) { "done" } else { "open" }
-                Path  = $note.RelativePath
-                Line  = $lineNumber
-                Text  = $matches[2].Trim()
+                State     = if ($isDone) { "done" } else { "open" }
+                Path      = $note.RelativePath
+                Line      = $lineNumber
+                Text      = $taskMatch.Groups[2].Value.Trim()
+                NoteTitle  = $note.Title
+                Project    = $project
+                NoteStatus = if ($noteStatus) { $noteStatus } else { "open" }
+                Priority   = $priority
+                Due        = $dueDate
+                Scheduled  = $scheduledDate
             }
         }
     }
@@ -813,6 +840,8 @@ Usage:
   ./note.ps1 tasks
   ./note.ps1 tasks all
   ./note.ps1 tasks done
+  ./note.ps1 tasks today
+  ./note.ps1 tasks overdue
   ./note.ps1 props "My Note"
   ./note.ps1 props "My Note" set status active
   ./note.ps1 props "My Note" add tags work,planning
@@ -840,7 +869,7 @@ Commands:
   orphans    List notes with no inbound wiki links.
   recent     List recently modified notes, newest first.
   agenda     Show notes with due or scheduled frontmatter dates.
-  tasks      Collect markdown checkbox tasks across the vault.
+  tasks      Collect markdown checkbox tasks with frontmatter context.
   props      Read or update frontmatter properties for a note.
   rename     Rename a note file and update wiki links that point to it.
   unresolved List unresolved wiki links across the vault or in one note.
@@ -1125,12 +1154,35 @@ function Show-Tasks {
     param([string]$StateText)
 
     $state = if ($StateText) { $StateText.Trim().ToLowerInvariant() } else { "open" }
-    if ($state -notin @("open", "done", "all")) {
-        throw "Task filter must be one of: open, done, all."
+    if ($state -notin @("open", "done", "all", "today", "overdue")) {
+        throw "Task filter must be one of: open, done, all, today, overdue."
     }
 
     foreach ($task in (Get-Tasks -State $state)) {
-        "{0}:{1}  [{2}] {3}" -f $task.Path, $task.Line, $task.State, $task.Text
+        $contextParts = @()
+        if ($task.Project) {
+            $contextParts += ("project {0}" -f $task.Project)
+        }
+        if ($task.NoteStatus) {
+            $contextParts += ("status {0}" -f $task.NoteStatus)
+        }
+        if ($task.Priority) {
+            $contextParts += ("priority {0}" -f $task.Priority)
+        }
+        if ($task.Scheduled) {
+            $contextParts += ("scheduled {0}" -f $task.Scheduled.ToString("yyyy-MM-dd"))
+        }
+        if ($task.Due) {
+            $contextParts += ("due {0}" -f $task.Due.ToString("yyyy-MM-dd"))
+        }
+
+        $contextText = if ($contextParts.Count -gt 0) {
+            "  (" + ($contextParts -join ", ") + ")"
+        } else {
+            ""
+        }
+
+        "{0}:{1}  [{2}] {3}{4}" -f $task.Path, $task.Line, $task.State, $task.Text, $contextText
     }
 }
 

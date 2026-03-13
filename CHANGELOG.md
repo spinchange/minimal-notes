@@ -8,10 +8,12 @@ All notable changes to this project are documented here.
 
 - `agenda` command with `today`, `overdue`, and `all` views based on frontmatter fields like `scheduled`, `due`, `status`, and `priority`
 - metadata-aware agenda tests covering active, today, and overdue cases
+- metadata-aware `tasks` views with `today` and `overdue` filters driven by note frontmatter
+- task output now includes note context like project, status, priority, scheduled date, and due date
 
 ### Changed
 
-- roadmap and README examples updated to reflect the new agenda workflow
+- roadmap and README examples updated to reflect the new agenda and task workflows
 
 ## Since The Initial Commit
 
@@ -38,7 +40,7 @@ All notable changes to this project are documented here.
 
 - frontmatter/property support
 - aliases and tag support from frontmatter
-- task collection from markdown checkboxes
+- metadata-aware task collection from markdown checkboxes
 - agenda from frontmatter dates
 
 ### Quality and reliability
