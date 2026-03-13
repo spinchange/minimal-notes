@@ -1,6 +1,7 @@
 $global:MinimalNotes_TestHere = Split-Path -Parent $MyInvocation.MyCommand.Path
 $global:MinimalNotes_ProjectRoot = Split-Path -Parent $global:MinimalNotes_TestHere
 $global:MinimalNotes_ScriptPath = Join-Path $global:MinimalNotes_ProjectRoot "note.ps1"
+$global:MinimalNotes_ModuleManifestPath = Join-Path $global:MinimalNotes_ProjectRoot "MinimalNotes.psd1"
 
 function script:New-TestVault {
     $path = Join-Path ([System.IO.Path]::GetTempPath()) ("minimal-notes-tests-" + [guid]::NewGuid().ToString("n"))
@@ -82,6 +83,15 @@ Describe "Minimal Notes CLI" {
         $result.ExitCode | Should -Be 0
         (Test-Path -LiteralPath (Join-Path $script:VaultPath "project-ideas.md")) | Should -Be $true
         (Get-Content -LiteralPath (Join-Path $script:VaultPath "project-ideas.md") -Raw) | Should -Match "# Project Ideas"
+    }
+
+    It "imports the module manifest and exposes the CLI entry point" {
+        Import-Module $global:MinimalNotes_ModuleManifestPath -Force -ErrorAction Stop
+
+        $commands = Get-Command -Module MinimalNotes
+
+        ($commands.Name -contains "Invoke-MinimalNotesCli") | Should -Be $true
+        ($commands.Name -contains "Get-MinimalNotesVaultPath") | Should -Be $true
     }
 
     It "creates a note from a template with placeholders" {

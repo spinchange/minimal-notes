@@ -2,7 +2,7 @@
 
 A lightweight, local-first, Obsidian-inspired notes CLI for PowerShell 7.
 
-Minimal Notes keeps the model simple: your notes are plain markdown files in a local `vault`, and the CLI adds the connective tissue around them.
+Minimal Notes keeps the model simple: your notes are plain markdown files in a local `vault`, and the CLI adds the connective tissue around them. The project now ships as both a reusable PowerShell module and a thin CLI wrapper.
 
 ## Why this exists
 
@@ -58,6 +58,8 @@ The repository intentionally ignores the contents of `vault/` by default.
 ```text
 minimal-notes/
   note.ps1
+  MinimalNotes.psm1
+  MinimalNotes.psd1
   run-tests.ps1
   tests/
   templates/
@@ -103,6 +105,16 @@ $env:MINIMAL_NOTES_NO_OPEN = "1"
 ```
 
 If `MINIMAL_NOTES_EDITOR` is not set, the script tries `code` first and falls back to `notepad.exe`.
+
+## Module use
+
+You can use the reusable module directly:
+
+```powershell
+Import-Module .\MinimalNotes.psd1 -Force
+Invoke-MinimalNotesCli -Command list
+Get-MinimalNotesVaultPath
+```
 
 ## Example workflow
 
@@ -254,7 +266,7 @@ Focus: help reorganize a growing vault safely.
 
 Focus: keep the codebase maintainable as features expand.
 
-- split the project into a reusable PowerShell module plus a thin CLI wrapper
+- ~~split the project into a reusable PowerShell module plus a thin CLI wrapper~~
 - add deeper parsing and unit tests alongside the current smoke tests
 - introduce a config file for vault defaults, editor, templates, and display preferences
 - improve performance for larger vaults, potentially with an optional lightweight index
@@ -264,7 +276,7 @@ Focus: keep the codebase maintainable as features expand.
 1. ~~`agenda`~~
 2. ~~metadata-aware `tasks`~~
 3. ~~templates~~
-4. module refactor
+4. ~~module refactor~~
 5. dashboards or reports
 6. related/graph tooling
 7. merge/split/repair refactoring commands
@@ -285,7 +297,7 @@ Install-Module Pester -Scope CurrentUser -Force -SkipPublisherCheck
 
 Current local status:
 
-- 35 tests passing
+- 36 tests passing
 - 0 failures
 
 ## License

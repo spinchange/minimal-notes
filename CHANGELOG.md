@@ -13,10 +13,13 @@ All notable changes to this project are documented here.
 - reusable template files in `templates/`
 - `template` command for listing, previewing, and scaffolding templates
 - `new "Note" --template name` with placeholder expansion for title, slug, and timestamps
+- reusable `MinimalNotes` PowerShell module with a thin `note.ps1` CLI wrapper
+- module manifest and smoke test for importing the public module entry points
 
 ### Changed
 
 - roadmap and README examples updated to reflect the new agenda, task, and template workflows
+- project structure now separates reusable logic from the CLI script
 
 ## Since The Initial Commit
 
@@ -55,6 +58,7 @@ All notable changes to this project are documented here.
 - clearer ambiguous-note resolution
 - CI workflow for GitHub Actions
 - `.gitattributes` for line-ending normalization
+- module import smoke coverage
 
 ### Repository polish
 
