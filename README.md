@@ -24,6 +24,7 @@ This project aims for the useful core of Obsidian without the heavyweight app sh
 - orphan and recent note views
 - agenda from frontmatter dates
 - metadata-aware task collection from markdown checkboxes
+- reusable note templates with placeholder expansion
 - frontmatter properties, tags, and aliases
 - safe note rename with automatic link updates
 - terminal preview
@@ -36,6 +37,8 @@ From the project folder:
 pwsh -NoProfile -File .\note.ps1 help
 pwsh -NoProfile -File .\note.ps1 new "Project Ideas"
 pwsh -NoProfile -File .\note.ps1 capture "remember this"
+pwsh -NoProfile -File .\note.ps1 template new meeting
+pwsh -NoProfile -File .\note.ps1 new "Sprint Review" --template meeting
 pwsh -NoProfile -File .\note.ps1 tasks
 pwsh -NoProfile -File .\note.ps1 tasks today
 pwsh -NoProfile -File .\note.ps1 props "Project Ideas" set status active
@@ -57,6 +60,7 @@ minimal-notes/
   note.ps1
   run-tests.ps1
   tests/
+  templates/
   vault/
 ```
 
@@ -75,6 +79,7 @@ recent     List recently modified notes, newest first.
 agenda     Show notes with due or scheduled frontmatter dates.
 tasks      Collect markdown checkbox tasks across the vault.
           Supports open, done, all, today, and overdue views.
+template   List, preview, or create note templates.
 props      Read or update frontmatter properties for a note.
 rename     Rename a note file and update wiki links that point to it.
 unresolved List unresolved wiki links across the vault or in one note.
@@ -92,6 +97,7 @@ help       Show this help.
 
 ```powershell
 $env:MINIMAL_NOTES_VAULT = "C:\Users\user\Documents\notes"
+$env:MINIMAL_NOTES_TEMPLATES = "C:\Users\user\Documents\note-templates"
 $env:MINIMAL_NOTES_EDITOR = "notepad.exe"
 $env:MINIMAL_NOTES_NO_OPEN = "1"
 ```
@@ -104,6 +110,14 @@ Create a note:
 
 ```powershell
 pwsh -NoProfile -File .\note.ps1 new "PowerShell Ideas"
+```
+
+Create and use a template:
+
+```powershell
+pwsh -NoProfile -File .\note.ps1 template new meeting
+pwsh -NoProfile -File .\note.ps1 template show meeting
+pwsh -NoProfile -File .\note.ps1 new "Weekly Sync" --template meeting
 ```
 
 Add links inside it:
@@ -185,6 +199,17 @@ pwsh -NoProfile -File .\note.ps1 tasks overdue
 
 Task output includes note context when available, such as `project`, `status`, `priority`, `scheduled`, and `due`.
 
+Templates are plain markdown files stored in `templates/`. They support a few built-in placeholders:
+
+- `{{title}}`
+- `{{slug}}`
+- `{{date}}`
+- `{{time}}`
+- `{{datetime}}`
+- `{{year}}`
+- `{{month}}`
+- `{{day}}`
+
 Maintain link structure:
 
 ```powershell
@@ -201,8 +226,8 @@ Focus: turn frontmatter into day-to-day utility.
 
 - ~~`agenda` driven by fields like `due`, `scheduled`, `status`, and `priority`~~
 - ~~smarter `tasks` that include note context such as project, status, and priority~~
+- ~~note templates for common frontmatter and note shapes~~
 - better `props` support, including `unset`, clearer list editing, and stronger validation
-- note templates for common frontmatter and note shapes
 - weekly and monthly note workflows built on top of the existing daily note model
 
 ### Phase 2: Retrieval and structure
@@ -238,7 +263,7 @@ Focus: keep the codebase maintainable as features expand.
 
 1. ~~`agenda`~~
 2. ~~metadata-aware `tasks`~~
-3. templates
+3. ~~templates~~
 4. module refactor
 5. dashboards or reports
 6. related/graph tooling
@@ -260,7 +285,7 @@ Install-Module Pester -Scope CurrentUser -Force -SkipPublisherCheck
 
 Current local status:
 
-- 32 tests passing
+- 35 tests passing
 - 0 failures
 
 ## License

@@ -10,10 +10,13 @@ All notable changes to this project are documented here.
 - metadata-aware agenda tests covering active, today, and overdue cases
 - metadata-aware `tasks` views with `today` and `overdue` filters driven by note frontmatter
 - task output now includes note context like project, status, priority, scheduled date, and due date
+- reusable template files in `templates/`
+- `template` command for listing, previewing, and scaffolding templates
+- `new "Note" --template name` with placeholder expansion for title, slug, and timestamps
 
 ### Changed
 
-- roadmap and README examples updated to reflect the new agenda and task workflows
+- roadmap and README examples updated to reflect the new agenda, task, and template workflows
 
 ## Since The Initial Commit
 
@@ -42,6 +45,7 @@ All notable changes to this project are documented here.
 - aliases and tag support from frontmatter
 - metadata-aware task collection from markdown checkboxes
 - agenda from frontmatter dates
+- reusable note templates with placeholder expansion
 
 ### Quality and reliability
 

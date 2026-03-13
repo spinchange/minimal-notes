@@ -19,11 +19,17 @@ function script:Remove-TestVault {
 function script:Invoke-NoteCli {
     param(
         [string]$VaultPath,
+        [string]$TemplatesPath,
         [string[]]$Arguments
     )
 
     $env:MINIMAL_NOTES_VAULT = $VaultPath
     $env:MINIMAL_NOTES_NO_OPEN = "1"
+    if ($TemplatesPath) {
+        $env:MINIMAL_NOTES_TEMPLATES = $TemplatesPath
+    } else {
+        Remove-Item Env:MINIMAL_NOTES_TEMPLATES -ErrorAction SilentlyContinue
+    }
 
     $output = & pwsh -NoProfile -File $global:MinimalNotes_ScriptPath @Arguments 2>&1
     $exitCode = $LASTEXITCODE
@@ -66,6 +72,7 @@ Describe "Minimal Notes CLI" {
     AfterEach {
         Remove-TestVault -Path $script:VaultPath
         Remove-Item Env:MINIMAL_NOTES_VAULT -ErrorAction SilentlyContinue
+        Remove-Item Env:MINIMAL_NOTES_TEMPLATES -ErrorAction SilentlyContinue
         Remove-Item Env:MINIMAL_NOTES_NO_OPEN -ErrorAction SilentlyContinue
     }
 
@@ -75,6 +82,61 @@ Describe "Minimal Notes CLI" {
         $result.ExitCode | Should -Be 0
         (Test-Path -LiteralPath (Join-Path $script:VaultPath "project-ideas.md")) | Should -Be $true
         (Get-Content -LiteralPath (Join-Path $script:VaultPath "project-ideas.md") -Raw) | Should -Match "# Project Ideas"
+    }
+
+    It "creates a note from a template with placeholders" {
+        $templatesPath = Join-Path $script:VaultPath "templates"
+        New-Item -ItemType Directory -Path $templatesPath | Out-Null
+        Set-Content -LiteralPath (Join-Path $templatesPath "meeting.md") -Value @(
+            "---",
+            "status: active",
+            "---",
+            "",
+            "# {{title}}",
+            "",
+            "Slug: {{slug}}",
+            "Created: {{date}}"
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -TemplatesPath $templatesPath -Arguments @("new", "Sprint Review", "--template", "meeting")
+        $notePath = Join-Path $script:VaultPath "sprint-review.md"
+
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Be $notePath
+        (Get-Content -LiteralPath $notePath -Raw) | Should -Match "# Sprint Review"
+        (Get-Content -LiteralPath $notePath -Raw) | Should -Match "Slug: sprint-review"
+        (Get-Content -LiteralPath $notePath -Raw) | Should -Match "status: active"
+    }
+
+    It "lists and previews templates" {
+        $templatesPath = Join-Path $script:VaultPath "templates"
+        New-Item -ItemType Directory -Path $templatesPath | Out-Null
+        Set-Content -LiteralPath (Join-Path $templatesPath "meeting.md") -Value @(
+            "# {{title}}",
+            "",
+            "Agenda item"
+        )
+
+        $listResult = Invoke-NoteCli -VaultPath $script:VaultPath -TemplatesPath $templatesPath -Arguments @("template")
+        $showResult = Invoke-NoteCli -VaultPath $script:VaultPath -TemplatesPath $templatesPath -Arguments @("template", "show", "meeting")
+
+        $listResult.ExitCode | Should -Be 0
+        $listResult.Text | Should -Match "meeting.md"
+        $showResult.ExitCode | Should -Be 0
+        $showResult.Text | Should -Match "{{title}}"
+        $showResult.Text | Should -Match "Agenda item"
+    }
+
+    It "creates a template scaffold" {
+        $templatesPath = Join-Path $script:VaultPath "templates"
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -TemplatesPath $templatesPath -Arguments @("template", "new", "Meeting Notes")
+        $templatePath = Join-Path $templatesPath "meeting-notes.md"
+
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Be $templatePath
+        (Test-Path -LiteralPath $templatePath) | Should -Be $true
+        (Get-Content -LiteralPath $templatePath -Raw) | Should -Match "# {{title}}"
     }
 
     It "lists notes with a filter" {

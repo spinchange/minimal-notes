@@ -12,6 +12,7 @@ $Args = @($Args)
 
 $Script:ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Script:VaultRoot = if ($env:MINIMAL_NOTES_VAULT) { $env:MINIMAL_NOTES_VAULT } else { Join-Path $Script:ProjectRoot "vault" }
+$Script:TemplateRoot = if ($env:MINIMAL_NOTES_TEMPLATES) { $env:MINIMAL_NOTES_TEMPLATES } else { Join-Path $Script:ProjectRoot "templates" }
 $Script:NoOpen = $env:MINIMAL_NOTES_NO_OPEN -in @("1", "true", "yes")
 $Script:DefaultEditor = if ($env:MINIMAL_NOTES_EDITOR) {
     $env:MINIMAL_NOTES_EDITOR
@@ -26,6 +27,12 @@ $Script:DefaultEditor = if ($env:MINIMAL_NOTES_EDITOR) {
 function Ensure-Vault {
     if (-not (Test-Path -LiteralPath $Script:VaultRoot)) {
         New-Item -ItemType Directory -Path $Script:VaultRoot | Out-Null
+    }
+}
+
+function Ensure-TemplateRoot {
+    if (-not (Test-Path -LiteralPath $Script:TemplateRoot)) {
+        New-Item -ItemType Directory -Path $Script:TemplateRoot | Out-Null
     }
 }
 
@@ -62,6 +69,12 @@ function Get-RelativeVaultPath {
     param([Parameter(Mandatory)][string]$Path)
 
     return [System.IO.Path]::GetRelativePath($Script:VaultRoot, $Path)
+}
+
+function Get-RelativeTemplatePath {
+    param([Parameter(Mandatory)][string]$Path)
+
+    return [System.IO.Path]::GetRelativePath($Script:TemplateRoot, $Path)
 }
 
 function Normalize-NoteReference {
@@ -230,6 +243,125 @@ function Get-PlannedNotePath {
     return Join-Path $targetDir "$slug.md"
 }
 
+function Get-PlannedTemplatePath {
+    param([Parameter(Mandatory)][string]$Name)
+
+    $relativeName = $Name.Trim() -replace '/', '\'
+    $leafName = Split-Path -Path $relativeName -Leaf
+    $parentDir = Split-Path -Path $relativeName -Parent
+    $slug = ConvertTo-NoteSlug -Name $leafName
+    $targetDir = if ([string]::IsNullOrWhiteSpace($parentDir)) { $Script:TemplateRoot } else { Join-Path $Script:TemplateRoot $parentDir }
+
+    return Join-Path $targetDir "$slug.md"
+}
+
+function Get-AllTemplates {
+    Ensure-TemplateRoot
+
+    Get-ChildItem -LiteralPath $Script:TemplateRoot -Recurse -File -Filter "*.md" |
+        Sort-Object FullName |
+        ForEach-Object {
+            [pscustomobject]@{
+                Path         = $_.FullName
+                RelativePath = Get-RelativeTemplatePath -Path $_.FullName
+                Slug         = [System.IO.Path]::GetFileNameWithoutExtension($_.Name)
+                Title        = Get-NoteTitle -Path $_.FullName
+                LastWrite    = $_.LastWriteTime
+            }
+        }
+}
+
+function Resolve-Template {
+    param([Parameter(Mandatory)][string]$Name)
+
+    $trimmed = $Name.Trim()
+    if ([string]::IsNullOrWhiteSpace($trimmed)) {
+        throw "A template name is required."
+    }
+
+    if (Test-Path -LiteralPath $trimmed) {
+        return (Resolve-Path -LiteralPath $trimmed).Path
+    }
+
+    $slug = ConvertTo-NoteSlug -Name $trimmed
+    $templates = @(Get-AllTemplates)
+
+    $exactSlug = @($templates | Where-Object { $_.Slug -eq $slug })
+    if ($exactSlug.Count -eq 1) {
+        return $exactSlug[0].Path
+    }
+
+    $exactTitle = @($templates | Where-Object { $_.Title -eq $trimmed })
+    if ($exactTitle.Count -eq 1) {
+        return $exactTitle[0].Path
+    }
+
+    $normalizedTrimmed = Normalize-NoteReference -Reference $trimmed
+    $byRelativePath = @($templates | Where-Object {
+        (Normalize-NoteReference -Reference $_.RelativePath) -eq $normalizedTrimmed
+    })
+    if ($byRelativePath.Count -eq 1) {
+        return $byRelativePath[0].Path
+    }
+
+    $templateMatches = foreach ($template in $templates) {
+        $titleScore = Get-FuzzyScore -Query $trimmed -Candidate $template.Title
+        $slugScore = Get-FuzzyScore -Query $trimmed -Candidate $template.Slug
+        $pathScore = Get-FuzzyScore -Query $trimmed -Candidate $template.RelativePath
+        $score = ($titleScore, $slugScore, $pathScore | Measure-Object -Maximum).Maximum
+
+        if ($score -ge 0) {
+            [pscustomobject]@{
+                Score    = $score
+                Template = $template
+            }
+        }
+    }
+
+    $fuzzy = @(
+        $templateMatches |
+            Sort-Object @{ Expression = "Score"; Descending = $true }, @{ Expression = { $_.Template.LastWrite }; Descending = $true } |
+            Select-Object -First 2
+    )
+
+    if ($fuzzy.Count -eq 1) {
+        return $fuzzy[0].Template.Path
+    }
+    if ($fuzzy.Count -gt 1) {
+        $candidates = $fuzzy | ForEach-Object { $_.Template.Title } | Sort-Object -Unique
+        throw ("Ambiguous template name '{0}'. Matches: {1}" -f $trimmed, ($candidates -join ", "))
+    }
+
+    return $null
+}
+
+function Expand-TemplateContent {
+    param(
+        [Parameter(Mandatory)][string]$Content,
+        [Parameter(Mandatory)][string]$Title,
+        [Parameter(Mandatory)][string]$Slug
+    )
+
+    $now = Get-Date
+    $tokens = [ordered]@{
+        "{{title}}"    = $Title
+        "{{slug}}"     = $Slug
+        "{{date}}"     = $now.ToString("yyyy-MM-dd")
+        "{{time}}"     = $now.ToString("HH:mm")
+        "{{datetime}}" = $now.ToString("yyyy-MM-dd HH:mm:ss")
+        "{{year}}"     = $now.ToString("yyyy")
+        "{{month}}"    = $now.ToString("MM")
+        "{{day}}"      = $now.ToString("dd")
+    }
+
+    $expanded = $Content
+    foreach ($entry in $tokens.GetEnumerator()) {
+        $expanded = $expanded.Replace($entry.Key, $entry.Value)
+    }
+
+    return $expanded
+}
+
 function Get-FuzzyScore {
     param(
         [Parameter(Mandatory)][string]$Query,
@@ -380,6 +512,7 @@ function Resolve-LinkTarget {
 function New-NoteFile {
     param(
         [Parameter(Mandatory)][string]$Name,
+        [string]$TemplateName,
         [switch]$Open
     )
 
@@ -387,6 +520,7 @@ function New-NoteFile {
 
     $relativeName = $Name.Trim() -replace '/', '\'
     $leafName = Split-Path -Path $relativeName -Leaf
+    $slug = ConvertTo-NoteSlug -Name $leafName
     $targetDir = Split-Path -Parent (Get-PlannedNotePath -Name $Name)
     $path = Get-PlannedNotePath -Name $Name
 
@@ -395,13 +529,24 @@ function New-NoteFile {
     }
 
     if (-not (Test-Path -LiteralPath $path)) {
-        $content = @(
-            "# $leafName"
-            ""
-            "Created: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
-            ""
-        )
-        Set-Content -LiteralPath $path -Value $content -Encoding utf8
+        if ($TemplateName) {
+            $templatePath = Resolve-Template -Name $TemplateName
+            if (-not $templatePath) {
+                throw "Template not found: $TemplateName"
+            }
+
+            $templateContent = Get-Content -LiteralPath $templatePath -Raw
+            $content = Expand-TemplateContent -Content $templateContent -Title $leafName -Slug $slug
+            Set-Content -LiteralPath $path -Value $content -Encoding utf8
+        } else {
+            $content = @(
+                "# $leafName"
+                ""
+                "Created: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+                ""
+            )
+            Set-Content -LiteralPath $path -Value $content -Encoding utf8
+        }
     }
 
     if ($Open) {
@@ -816,12 +961,86 @@ function Update-LinksInContent {
     })
 }
 
+function New-TemplateFile {
+    param([Parameter(Mandatory)][string]$Name)
+
+    Ensure-TemplateRoot
+
+    $path = Get-PlannedTemplatePath -Name $Name
+    $targetDir = Split-Path -Parent $path
+    $leafName = Split-Path -Leaf ($Name.Trim() -replace '/', '\')
+
+    if (-not (Test-Path -LiteralPath $targetDir)) {
+        New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+    }
+
+    if (-not (Test-Path -LiteralPath $path)) {
+        $content = @(
+            "# {{title}}"
+            ""
+            "Created: {{datetime}}"
+            ""
+            "<!-- Template: $leafName -->"
+            ""
+        )
+        Set-Content -LiteralPath $path -Value $content -Encoding utf8
+    }
+
+    return $path
+}
+
+function Show-Templates {
+    foreach ($template in @(Get-AllTemplates)) {
+        "{0}  {1}" -f $template.Title, $template.RelativePath
+    }
+}
+
+function Show-TemplatePreview {
+    param([Parameter(Mandatory)][string]$Name)
+
+    $path = Resolve-Template -Name $Name
+    if (-not $path) {
+        throw "Template not found: $Name"
+    }
+
+    Get-Content -LiteralPath $path
+}
+
+function Parse-NewCommandArguments {
+    param([string[]]$Values)
+
+    if ($Values.Count -eq 0) {
+        throw "Usage: ./note.ps1 new `"My Note`" [--template template-name]"
+    }
+
+    $templateIndex = [Array]::IndexOf($Values, "--template")
+    if ($templateIndex -lt 0) {
+        return [pscustomobject]@{
+            Name         = Require-Argument -Values $Values -Message "Usage: ./note.ps1 new `"My Note`" [--template template-name]"
+            TemplateName = $null
+        }
+    }
+
+    if ($templateIndex -eq 0 -or $templateIndex -eq ($Values.Count - 1)) {
+        throw "Usage: ./note.ps1 new `"My Note`" [--template template-name]"
+    }
+
+    $nameParts = @($Values[0..($templateIndex - 1)])
+    $templateParts = @($Values[($templateIndex + 1)..($Values.Count - 1)])
+
+    return [pscustomobject]@{
+        Name         = Require-Argument -Values $nameParts -Message "Usage: ./note.ps1 new `"My Note`" [--template template-name]"
+        TemplateName = Require-Argument -Values $templateParts -Message "Template name is required."
+    }
+}
+
 function Show-Help {
     @"
 Minimal Notes CLI
 
 Usage:
   ./note.ps1 new "My Note"
+  ./note.ps1 new "My Note" --template meeting
   ./note.ps1 open "My Note"
   ./note.ps1 list
   ./note.ps1 list idea
@@ -842,6 +1061,10 @@ Usage:
   ./note.ps1 tasks done
   ./note.ps1 tasks today
   ./note.ps1 tasks overdue
+  ./note.ps1 template
+  ./note.ps1 template list
+  ./note.ps1 template show meeting
+  ./note.ps1 template new meeting
   ./note.ps1 props "My Note"
   ./note.ps1 props "My Note" set status active
   ./note.ps1 props "My Note" add tags work,planning
@@ -859,7 +1082,7 @@ Usage:
   ./note.ps1 daily 2026-03-12
 
 Commands:
-  new        Create a note from a title or path-like name.
+  new        Create a note from a title or path-like name, optionally from a template.
   open       Open an existing note in your editor.
   list       List notes in the vault, optionally filtered.
   search     Literal full-text search across all markdown notes.
@@ -870,6 +1093,7 @@ Commands:
   recent     List recently modified notes, newest first.
   agenda     Show notes with due or scheduled frontmatter dates.
   tasks      Collect markdown checkbox tasks with frontmatter context.
+  template   List, preview, or create note templates in templates/.
   props      Read or update frontmatter properties for a note.
   rename     Rename a note file and update wiki links that point to it.
   unresolved List unresolved wiki links across the vault or in one note.
@@ -884,6 +1108,7 @@ Commands:
 
 Environment:
   MINIMAL_NOTES_VAULT   Override the vault location.
+  MINIMAL_NOTES_TEMPLATES Override the templates location.
   MINIMAL_NOTES_EDITOR  Override the editor command.
   MINIMAL_NOTES_NO_OPEN Skip launching the editor and print the file path instead.
 "@
@@ -1393,8 +1618,8 @@ Ensure-Vault
 try {
     switch ($Command.ToLowerInvariant()) {
         "new" {
-            $name = Require-Argument -Values $Args -Message "Usage: ./note.ps1 new `"My Note`""
-            $path = New-NoteFile -Name $name
+            $newArguments = Parse-NewCommandArguments -Values $Args
+            $path = New-NoteFile -Name $newArguments.Name -TemplateName $newArguments.TemplateName
             Write-Output $path
         }
         "open" {
@@ -1438,6 +1663,37 @@ try {
         "tasks" {
             $state = if ($Args.Count -gt 0) { $Args -join " " } else { $null }
             Show-Tasks -StateText $state
+        }
+        "template" {
+            $templateArgs = @($Args | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+            if ($templateArgs.Count -eq 0) {
+                Show-Templates
+                break
+            }
+
+            $action = $templateArgs[0].Trim().ToLowerInvariant()
+            switch ($action) {
+                "list" {
+                    Show-Templates
+                }
+                "show" {
+                    if ($templateArgs.Count -lt 2) {
+                        throw "Usage: ./note.ps1 template show meeting"
+                    }
+                    $name = Require-Argument -Values @($templateArgs[1..($templateArgs.Count - 1)]) -Message "Usage: ./note.ps1 template show meeting"
+                    Show-TemplatePreview -Name $name
+                }
+                "new" {
+                    if ($templateArgs.Count -lt 2) {
+                        throw "Usage: ./note.ps1 template new meeting"
+                    }
+                    $name = Require-Argument -Values @($templateArgs[1..($templateArgs.Count - 1)]) -Message "Usage: ./note.ps1 template new meeting"
+                    New-TemplateFile -Name $name
+                }
+                default {
+                    throw "Unknown template action: $action"
+                }
+            }
         }
         "props" {
             if ($Args.Count -eq 0) {
