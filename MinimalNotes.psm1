@@ -21,6 +21,14 @@ function Get-MinimalNotesVaultPath {
     return $Script:VaultRoot
 }
 
+function Get-SavedQueriesPath {
+    if ($env:MINIMAL_NOTES_QUERIES) {
+        return $env:MINIMAL_NOTES_QUERIES
+    }
+
+    return Join-Path $Script:ProjectRoot "saved-queries.json"
+}
+
 Initialize-MinimalNotesContext
 
 function Ensure-Vault {
@@ -1355,6 +1363,8 @@ Usage:
   ./note.ps1 orphans
   ./note.ps1 recent
   ./note.ps1 recent 5
+  ./note.ps1 stale
+  ./note.ps1 stale 60
   ./note.ps1 dashboard
   ./note.ps1 dashboard 7
   ./note.ps1 agenda
@@ -1377,6 +1387,10 @@ Usage:
   ./note.ps1 split "Source Note" "Section Heading" "New Note"
   ./note.ps1 repair-links
   ./note.ps1 repair-links all
+  ./note.ps1 query
+  ./note.ps1 query save work-today tasks today
+  ./note.ps1 query run work-today
+  ./note.ps1 dedupe
   ./note.ps1 template
   ./note.ps1 template list
   ./note.ps1 template show meeting
@@ -1408,6 +1422,7 @@ Commands:
   capture    Append a quick note to inbox.md or today's daily note.
   orphans    List notes with no inbound wiki links.
   recent     List recently modified notes, newest first.
+  stale      List notes untouched for at least N days.
   dashboard  Show a compact multi-section vault overview.
   agenda     Show notes with due or scheduled frontmatter dates.
   report     Summarize recent note and task activity for a time window.
@@ -1418,6 +1433,8 @@ Commands:
   merge      Merge one note into another and rewrite inbound links.
   split      Split a heading section into a new linked note.
   repair-links Attempt to repair unresolved wiki links using fuzzy note matches.
+  query      Save, list, show, run, or delete read-only saved queries.
+  dedupe     Preview likely duplicate notes without changing files.
   template   List, preview, or create note templates in templates/.
   props      Read or update frontmatter properties for a note, including unset and validation.
   rename     Rename a note file and update wiki links that point to it.
@@ -1818,6 +1835,195 @@ function Get-RecentNotes {
 
     return @(Get-AllNotes |
         Sort-Object LastWrite -Descending |
+        Select-Object -First $Limit)
+}
+
+function Get-StaleNotes {
+    param([int]$Days = 30)
+
+    if ($Days -lt 1) {
+        throw "Stale threshold must be at least 1 day."
+    }
+
+    $cutoff = (Get-Date).AddDays(-$Days)
+    return @(Get-AllNotes |
+        Where-Object { $_.LastWrite -lt $cutoff } |
+        Sort-Object LastWrite, Title)
+}
+
+function Get-AllowedSavedQueryCommands {
+    return @(
+        "list", "search", "find", "tags", "recent", "dashboard", "agenda", "report", "review",
+        "tasks", "related", "graph", "unresolved", "orphans", "preview", "path", "stale", "dedupe"
+    )
+}
+
+function Get-SavedQueries {
+    $path = Get-SavedQueriesPath
+    if (-not (Test-Path -LiteralPath $path)) {
+        return @{}
+    }
+
+    $raw = Get-Content -LiteralPath $path -Raw
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        return @{}
+    }
+
+    $data = $raw | ConvertFrom-Json -AsHashtable
+    if ($data) {
+        return $data
+    }
+
+    return @{}
+}
+
+function Set-SavedQueries {
+    param([Parameter(Mandatory)][hashtable]$Queries)
+
+    $path = Get-SavedQueriesPath
+    $json = $Queries | ConvertTo-Json -Depth 5
+    Set-Content -LiteralPath $path -Value $json -Encoding utf8
+}
+
+function Save-Query {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string[]]$CommandParts
+    )
+
+    $queryName = $Name.Trim().ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($queryName)) {
+        throw "Query name is required."
+    }
+
+    if ($CommandParts.Count -eq 0) {
+        throw "Saved query command is required."
+    }
+
+    $command = $CommandParts[0].Trim().ToLowerInvariant()
+    if ($command -notin (Get-AllowedSavedQueryCommands)) {
+        throw ("Saved queries only support read-only commands. Allowed: {0}" -f ((Get-AllowedSavedQueryCommands) -join ", "))
+    }
+
+    $savedArgs = if ($CommandParts.Count -gt 1) { @($CommandParts[1..($CommandParts.Count - 1)]) } else { @() }
+    $queries = Get-SavedQueries
+    $queries[$queryName] = @{
+        command = $command
+        args    = $savedArgs
+    }
+    Set-SavedQueries -Queries $queries
+    Write-Output (Get-SavedQueriesPath)
+}
+
+function Remove-SavedQuery {
+    param([Parameter(Mandatory)][string]$Name)
+
+    $queryName = $Name.Trim().ToLowerInvariant()
+    $queries = Get-SavedQueries
+    if ($queries.ContainsKey($queryName)) {
+        $queries.Remove($queryName)
+        Set-SavedQueries -Queries $queries
+    }
+    Write-Output (Get-SavedQueriesPath)
+}
+
+function Show-SavedQueries {
+    foreach ($entry in ((Get-SavedQueries).GetEnumerator() | Sort-Object Key)) {
+        $argsText = @($entry.Value["args"]) -join " "
+        "{0}: {1} {2}" -f $entry.Key, $entry.Value["command"], $argsText.Trim()
+    }
+}
+
+function Show-SavedQuery {
+    param([Parameter(Mandatory)][string]$Name)
+
+    $queryName = $Name.Trim().ToLowerInvariant()
+    $queries = Get-SavedQueries
+    if (-not $queries.ContainsKey($queryName)) {
+        throw "Saved query not found: $Name"
+    }
+
+    $entry = $queries[$queryName]
+    $argsText = @($entry["args"]) -join " "
+    "{0}: {1} {2}" -f $queryName, $entry["command"], $argsText.Trim()
+}
+
+function Invoke-SavedQuery {
+    param([Parameter(Mandatory)][string]$Name)
+
+    $queryName = $Name.Trim().ToLowerInvariant()
+    $queries = Get-SavedQueries
+    if (-not $queries.ContainsKey($queryName)) {
+        throw "Saved query not found: $Name"
+    }
+
+    $entry = $queries[$queryName]
+    Invoke-MinimalNotesCli -Command ([string]$entry["command"]) -Arguments @($entry["args"])
+}
+
+function Get-NormalizedNoteTitle {
+    param([Parameter(Mandatory)][string]$Title)
+
+    return (($Title.ToLowerInvariant() -replace '[^a-z0-9]+', ' ').Trim())
+}
+
+function Get-DedupeCandidates {
+    param([int]$Limit = 10)
+
+    if ($Limit -lt 1) {
+        throw "Dedupe limit must be at least 1."
+    }
+
+    $notes = @(Get-AllNotes)
+    $results = New-Object System.Collections.Generic.List[object]
+
+    for ($i = 0; $i -lt $notes.Count; $i++) {
+        for ($j = $i + 1; $j -lt $notes.Count; $j++) {
+            $left = $notes[$i]
+            $right = $notes[$j]
+
+            $score = 0
+            $reasons = @()
+            $leftTitle = Get-NormalizedNoteTitle -Title $left.Title
+            $rightTitle = Get-NormalizedNoteTitle -Title $right.Title
+
+            if ($leftTitle -eq $rightTitle) {
+                $score += 6
+                $reasons += "same normalized title"
+            } elseif ((Get-FuzzyScore -Query $leftTitle -Candidate $rightTitle) -ge 0 -or (Get-FuzzyScore -Query $rightTitle -Candidate $leftTitle) -ge 0) {
+                $score += 3
+                $reasons += "similar title"
+            }
+
+            $leftTags = @(Get-NoteTags -Path $left.Path | Sort-Object -Unique)
+            $rightTags = @(Get-NoteTags -Path $right.Path | Sort-Object -Unique)
+            $sharedTags = @($leftTags | Where-Object { $_ -in $rightTags })
+            if ($sharedTags.Count -gt 0) {
+                $score += $sharedTags.Count
+                $reasons += ("shared tags {0}" -f ($sharedTags -join ", "))
+            }
+
+            $leftLinks = @(Get-ResolvedLinkPathsForNote -Path $left.Path)
+            $rightLinks = @(Get-ResolvedLinkPathsForNote -Path $right.Path)
+            $sharedLinks = @($leftLinks | Where-Object { $_ -in $rightLinks })
+            if ($sharedLinks.Count -gt 0) {
+                $score += $sharedLinks.Count
+                $reasons += ("shared links {0}" -f $sharedLinks.Count)
+            }
+
+            if ($score -ge 4) {
+                $results.Add([pscustomobject]@{
+                    Score   = $score
+                    Left    = $left
+                    Right   = $right
+                    Reasons = $reasons
+                })
+            }
+        }
+    }
+
+    return @($results |
+        Sort-Object @{ Expression = "Score"; Descending = $true }, @{ Expression = { $_.Left.Title } ; Descending = $false } |
         Select-Object -First $Limit)
 }
 
@@ -2323,6 +2529,37 @@ function Show-RelatedNotes {
     }
 }
 
+function Show-StaleNotes {
+    param([string]$DaysText)
+
+    $days = 30
+    if ($DaysText) {
+        if (-not [int]::TryParse($DaysText.Trim(), [ref]$days)) {
+            throw "Stale threshold must be a whole number of days."
+        }
+    }
+
+    foreach ($note in (Get-StaleNotes -Days $days)) {
+        "{0}d  {1}  {2}" -f [int](((Get-Date) - $note.LastWrite).TotalDays), $note.Title, $note.RelativePath
+    }
+}
+
+function Show-DedupeCandidates {
+    param([string]$LimitText)
+
+    $limit = 10
+    if ($LimitText) {
+        if (-not [int]::TryParse($LimitText.Trim(), [ref]$limit)) {
+            throw "Dedupe limit must be a whole number."
+        }
+    }
+
+    foreach ($item in (Get-DedupeCandidates -Limit $limit)) {
+        $paths = @($item.Left.RelativePath, $item.Right.RelativePath) | Sort-Object
+        "{0} <-> {1}  [score {2}]  {3}" -f $paths[0], $paths[1], $item.Score, ($item.Reasons -join ", ")
+    }
+}
+
 function ConvertTo-MermaidNodeId {
     param([Parameter(Mandatory)][string]$Path)
 
@@ -2479,6 +2716,10 @@ function Invoke-MinimalNotesCli {
             $limit = if ($Arguments.Count -gt 0) { $Arguments -join " " } else { $null }
             Show-RecentNotes -LimitText $limit
         }
+        "stale" {
+            $days = if ($Arguments.Count -gt 0) { $Arguments -join " " } else { $null }
+            Show-StaleNotes -DaysText $days
+        }
         "dashboard" {
             $limit = if ($Arguments.Count -gt 0) { $Arguments -join " " } else { $null }
             Show-Dashboard -LimitText $limit
@@ -2534,6 +2775,51 @@ function Invoke-MinimalNotesCli {
         "repair-links" {
             $target = if ($Arguments.Count -gt 0) { $Arguments -join " " } else { $null }
             Repair-Links -Target $target
+        }
+        "query" {
+            $queryArgs = @($Arguments | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+            if ($queryArgs.Count -eq 0) {
+                Show-SavedQueries
+                break
+            }
+
+            $action = $queryArgs[0].Trim().ToLowerInvariant()
+            switch ($action) {
+                "list" {
+                    Show-SavedQueries
+                }
+                "show" {
+                    if ($queryArgs.Count -lt 2) {
+                        throw "Usage: ./note.ps1 query show work-today"
+                    }
+                    Show-SavedQuery -Name $queryArgs[1]
+                }
+                "save" {
+                    if ($queryArgs.Count -lt 3) {
+                        throw "Usage: ./note.ps1 query save work-today tasks today"
+                    }
+                    Save-Query -Name $queryArgs[1] -CommandParts @($queryArgs[2..($queryArgs.Count - 1)])
+                }
+                "run" {
+                    if ($queryArgs.Count -lt 2) {
+                        throw "Usage: ./note.ps1 query run work-today"
+                    }
+                    Invoke-SavedQuery -Name $queryArgs[1]
+                }
+                "delete" {
+                    if ($queryArgs.Count -lt 2) {
+                        throw "Usage: ./note.ps1 query delete work-today"
+                    }
+                    Remove-SavedQuery -Name $queryArgs[1]
+                }
+                default {
+                    throw "Unknown query action: $action"
+                }
+            }
+        }
+        "dedupe" {
+            $limit = if ($Arguments.Count -gt 0) { $Arguments -join " " } else { $null }
+            Show-DedupeCandidates -LimitText $limit
         }
         "template" {
             $templateArgs = @($Arguments | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })

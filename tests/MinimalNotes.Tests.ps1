@@ -379,6 +379,88 @@ Describe "Minimal Notes CLI" {
         $lines[1].ToString() | Should -Match "Second  second.md"
     }
 
+    It "lists stale notes older than a threshold" {
+        $stalePath = Join-Path $script:VaultPath "stale.md"
+        $freshPath = Join-Path $script:VaultPath "fresh.md"
+
+        Set-Content -LiteralPath $stalePath -Value "# Stale"
+        Set-Content -LiteralPath $freshPath -Value "# Fresh"
+
+        (Get-Item -LiteralPath $stalePath).LastWriteTime = (Get-Date).AddDays(-45)
+        (Get-Item -LiteralPath $freshPath).LastWriteTime = (Get-Date).AddDays(-5)
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("stale", "30")
+
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Match "Stale  stale.md"
+        $result.Text | Should -Not -Match "Fresh"
+    }
+
+    It "saves, shows, runs, and deletes a saved query" {
+        $queryPath = Join-Path $global:MinimalNotes_ProjectRoot "saved-queries.json"
+        if (Test-Path -LiteralPath $queryPath) {
+            Remove-Item -LiteralPath $queryPath -Force
+        }
+
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "today-task.md") -Value @(
+            "---",
+            ("scheduled: {0}" -f (Get-Date).ToString("yyyy-MM-dd")),
+            "---",
+            "",
+            "# Today Task",
+            "",
+            "- [ ] Follow up today"
+        )
+
+        $saveResult = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("query", "save", "work-today", "tasks", "today")
+        $listResult = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("query")
+        $showResult = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("query", "show", "work-today")
+        $runResult = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("query", "run", "work-today")
+        $deleteResult = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("query", "delete", "work-today")
+
+        $saveResult.ExitCode | Should -Be 0
+        (Test-Path -LiteralPath $queryPath) | Should -Be $true
+        $listResult.Text | Should -Match "work-today: tasks today"
+        $showResult.Text | Should -Match "work-today: tasks today"
+        $runResult.Text | Should -Match "Follow up today"
+        $deleteResult.ExitCode | Should -Be 0
+
+        if (Test-Path -LiteralPath $queryPath) {
+            Remove-Item -LiteralPath $queryPath -Force
+        }
+    }
+
+    It "only previews dedupe candidates without changing files" {
+        $firstPath = Join-Path $script:VaultPath "project-plan.md"
+        $secondPath = Join-Path $script:VaultPath "project-plan-copy.md"
+
+        Set-Content -LiteralPath $firstPath -Value @(
+            "# Project Plan",
+            "",
+            "Tags: #work #plan",
+            "",
+            "See [[Shared Note]]."
+        )
+        Set-Content -LiteralPath $secondPath -Value @(
+            "# Project Plan Copy",
+            "",
+            "Tags: #work #plan",
+            "",
+            "See [[Shared Note]]."
+        )
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "shared-note.md") -Value "# Shared Note"
+
+        $beforeFirst = Get-Content -LiteralPath $firstPath -Raw
+        $beforeSecond = Get-Content -LiteralPath $secondPath -Raw
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("dedupe")
+
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Match "project-plan(-copy)?\.md <-> project-plan(-copy)?\.md"
+        $result.Text | Should -Match "score"
+        (Get-Content -LiteralPath $firstPath -Raw) | Should -Be $beforeFirst
+        (Get-Content -LiteralPath $secondPath -Raw) | Should -Be $beforeSecond
+    }
+
     It "shows a dashboard with multiple vault sections" {
         Set-Content -LiteralPath (Join-Path $script:VaultPath "project.md") -Value @(
             "---",

@@ -30,6 +30,7 @@ This project aims for the useful core of Obsidian without the heavyweight app sh
 - related-note suggestions and Mermaid graph output
 - merge, split, and repair-link refactoring tools
 - frontmatter properties, tags, aliases, and validation
+- stale-note views, saved queries, and preview-only dedupe
 - safe note rename with automatic link updates
 - terminal preview
 
@@ -47,6 +48,8 @@ pwsh -NoProfile -File .\note.ps1 dashboard
 pwsh -NoProfile -File .\note.ps1 weekly
 pwsh -NoProfile -File .\note.ps1 merge "Draft" "Project Archive"
 pwsh -NoProfile -File .\note.ps1 props "Project Ideas" unset priority
+pwsh -NoProfile -File .\note.ps1 stale 60
+pwsh -NoProfile -File .\note.ps1 query save work-today tasks today
 pwsh -NoProfile -File .\note.ps1 tasks
 pwsh -NoProfile -File .\note.ps1 tasks today
 pwsh -NoProfile -File .\note.ps1 props "Project Ideas" set status active
@@ -86,6 +89,7 @@ pick       Interactively choose a note to open.
 capture    Append a quick note to inbox.md or today's daily note.
 orphans    List notes with no inbound wiki links.
 recent     List recently modified notes, newest first.
+stale      List notes untouched for at least N days.
 dashboard  Show a compact multi-section vault overview.
 agenda     Show notes with due or scheduled frontmatter dates.
 report     Summarize recent note and task activity for a time window.
@@ -97,6 +101,8 @@ graph      Print a Mermaid note-link graph for one note or the full vault.
 merge      Merge one note into another and rewrite inbound links.
 split      Split a heading section into a new linked note.
 repair-links Attempt to repair unresolved wiki links using fuzzy note matches.
+query      Save, list, show, run, or delete read-only saved queries.
+dedupe     Preview likely duplicate notes without changing files.
 template   List, preview, or create note templates.
 props      Read or update frontmatter properties for a note.
 rename     Rename a note file and update wiki links that point to it.
@@ -261,6 +267,10 @@ pwsh -NoProfile -File .\note.ps1 graph "Project Archive"
 pwsh -NoProfile -File .\note.ps1 merge "Project Draft" "Project Archive"
 pwsh -NoProfile -File .\note.ps1 split "Project Archive" "Decisions" "Project Decisions"
 pwsh -NoProfile -File .\note.ps1 repair-links
+pwsh -NoProfile -File .\note.ps1 stale 45
+pwsh -NoProfile -File .\note.ps1 query save work-today tasks today
+pwsh -NoProfile -File .\note.ps1 query run work-today
+pwsh -NoProfile -File .\note.ps1 dedupe
 ```
 
 Calendar and overview workflows:
@@ -290,9 +300,9 @@ Focus: turn frontmatter into day-to-day utility.
 Focus: make the vault easier to navigate as it grows.
 
 - ~~`related <note>` suggestions from links, tags, aliases, and text overlap~~
-- stricter orphan and stale-note views
+- ~~stricter orphan and stale-note views~~
 - ~~local note maps or Mermaid graph export~~
-- saved queries and richer search filters that combine text, tags, props, and task state
+- ~~saved queries and richer search filters that combine text, tags, props, and task state~~
 - ~~dashboards that summarize recent notes, tasks, unresolved links, and due items~~
 - ~~reports or review views built from agenda, task, and note activity~~
 
@@ -303,7 +313,7 @@ Focus: help reorganize a growing vault safely.
 - ~~merge two notes and rewrite incoming links~~
 - ~~split sections into new linked notes~~
 - ~~repair broken or ambiguous links with suggestions~~
-- dedupe near-duplicate notes by title or content similarity
+- ~~dedupe near-duplicate notes by title or content similarity~~
 - extend `rename` to handle more path-move and alias-update cases
 
 ### Phase 4: Architecture and polish
@@ -341,7 +351,7 @@ Install-Module Pester -Scope CurrentUser -Force -SkipPublisherCheck
 
 Current local status:
 
-- 47 tests passing
+- 50 tests passing
 - 0 failures
 
 ## License

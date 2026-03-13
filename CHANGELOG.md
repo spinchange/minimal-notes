@@ -25,12 +25,16 @@ All notable changes to this project are documented here.
 - `repair-links` command to repair unresolved links when there is a clear fuzzy match
 - `props unset` command for removing frontmatter keys cleanly
 - validation for structured frontmatter fields like `status`, `priority`, `due`, and `scheduled`
+- `stale` command for listing notes untouched for at least N days
+- read-only saved queries with `query save|list|show|run|delete`
+- preview-only `dedupe` output for likely duplicate notes
 
 ### Changed
 
 - roadmap and README examples updated to reflect the new agenda, task, and template workflows
 - project structure now separates reusable logic from the CLI script
 - README and roadmap updated to reflect dashboards, reviews, calendar notes, and graph tooling
+- README and roadmap updated to reflect stale views, saved queries, and dedupe previews
 
 ## Since The Initial Commit
 
@@ -65,6 +69,7 @@ All notable changes to this project are documented here.
 - related-note suggestions and Mermaid graph output
 - merge, split, and repair-link refactoring workflows
 - stronger validated property workflows for frontmatter editing
+- stale-note views, saved queries, and preview-only dedupe
 
 ### Quality and reliability
 
@@ -78,6 +83,7 @@ All notable changes to this project are documented here.
 - broader workflow coverage for dashboard, report/review, calendar notes, and graph tooling
 - regression coverage for merge, split, and link-repair commands
 - regression coverage for props unset and validation rules
+- regression coverage for stale, saved-query, and dedupe workflows
 
 ### Repository polish
 
