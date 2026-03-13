@@ -1052,14 +1052,23 @@ Usage:
   ./note.ps1 orphans
   ./note.ps1 recent
   ./note.ps1 recent 5
+  ./note.ps1 dashboard
+  ./note.ps1 dashboard 7
   ./note.ps1 agenda
   ./note.ps1 agenda today
   ./note.ps1 agenda overdue
+  ./note.ps1 report
+  ./note.ps1 report monthly
+  ./note.ps1 review
+  ./note.ps1 review weekly
   ./note.ps1 tasks
   ./note.ps1 tasks all
   ./note.ps1 tasks done
   ./note.ps1 tasks today
   ./note.ps1 tasks overdue
+  ./note.ps1 related "My Note"
+  ./note.ps1 graph
+  ./note.ps1 graph "My Note"
   ./note.ps1 template
   ./note.ps1 template list
   ./note.ps1 template show meeting
@@ -1090,8 +1099,13 @@ Commands:
   capture    Append a quick note to inbox.md or today's daily note.
   orphans    List notes with no inbound wiki links.
   recent     List recently modified notes, newest first.
+  dashboard  Show a compact multi-section vault overview.
   agenda     Show notes with due or scheduled frontmatter dates.
+  report     Summarize recent note and task activity for a time window.
+  review     Show a daily or weekly review checklist and focus items.
   tasks      Collect markdown checkbox tasks with frontmatter context.
+  related    Suggest notes related to a target note by links and tags.
+  graph      Print a Mermaid note-link graph for one note or the full vault.
   template   List, preview, or create note templates in templates/.
   props      Read or update frontmatter properties for a note.
   rename     Rename a note file and update wiki links that point to it.
@@ -1102,6 +1116,8 @@ Commands:
   tags       List all tags, or notes containing a tag.
   preview    Print a note to the terminal.
   daily      Open or create a daily note at daily/YYYY-MM-DD.md.
+  weekly     Open or create a weekly note at weekly/YYYY-Www.md.
+  monthly    Open or create a monthly note at monthly/YYYY-MM.md.
   path       Print the vault path.
   help       Show this help.
 
@@ -1410,6 +1426,232 @@ function Show-Tasks {
     }
 }
 
+function Format-Section {
+    param(
+        [Parameter(Mandatory)][string]$Title,
+        [string[]]$Lines
+    )
+
+    Write-Output ("== {0} ==" -f $Title)
+    if ($Lines -and $Lines.Count -gt 0) {
+        foreach ($line in $Lines) {
+            Write-Output $line
+        }
+    } else {
+        Write-Output "(none)"
+    }
+    Write-Output ""
+}
+
+function Format-AgendaItemLine {
+    param([Parameter(Mandatory)]$Item)
+
+    $dateParts = @()
+    if ($Item.Scheduled) {
+        $dateParts += ("scheduled {0}" -f $Item.Scheduled.ToString("yyyy-MM-dd"))
+    }
+    if ($Item.Due) {
+        $dateParts += ("due {0}" -f $Item.Due.ToString("yyyy-MM-dd"))
+    }
+
+    $suffixParts = @()
+    $suffixParts += $Item.Status
+    if ($Item.Priority) {
+        $suffixParts += ("priority {0}" -f $Item.Priority)
+    }
+    if ($Item.IsOverdue) {
+        $suffixParts += "overdue"
+    } elseif ($Item.IsToday) {
+        $suffixParts += "today"
+    }
+
+    return ("{0}  {1}  [{2}]  {3}" -f $Item.Title, $Item.Path, ($dateParts -join "; "), ($suffixParts -join ", "))
+}
+
+function Format-TaskLine {
+    param([Parameter(Mandatory)]$Task)
+
+    $contextParts = @()
+    if ($Task.Project) {
+        $contextParts += ("project {0}" -f $Task.Project)
+    }
+    if ($Task.NoteStatus) {
+        $contextParts += ("status {0}" -f $Task.NoteStatus)
+    }
+    if ($Task.Priority) {
+        $contextParts += ("priority {0}" -f $Task.Priority)
+    }
+    if ($Task.Scheduled) {
+        $contextParts += ("scheduled {0}" -f $Task.Scheduled.ToString("yyyy-MM-dd"))
+    }
+    if ($Task.Due) {
+        $contextParts += ("due {0}" -f $Task.Due.ToString("yyyy-MM-dd"))
+    }
+
+    $contextText = if ($contextParts.Count -gt 0) {
+        "  (" + ($contextParts -join ", ") + ")"
+    } else {
+        ""
+    }
+
+    return ("{0}:{1}  [{2}] {3}{4}" -f $Task.Path, $Task.Line, $Task.State, $Task.Text, $contextText)
+}
+
+function Get-RecentNotes {
+    param([int]$Limit = 10)
+
+    if ($Limit -lt 1) {
+        throw "Recent limit must be at least 1."
+    }
+
+    return @(Get-AllNotes |
+        Sort-Object LastWrite -Descending |
+        Select-Object -First $Limit)
+}
+
+function Get-ResolvedLinkPathsForNote {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $resolved = foreach ($target in (Get-LinkTargets -Path $Path)) {
+        $resolvedPath = Resolve-LinkTarget -Target $target
+        if ($resolvedPath) {
+            $resolvedPath
+        }
+    }
+
+    return @($resolved | Sort-Object -Unique)
+}
+
+function Show-Dashboard {
+    param([string]$LimitText)
+
+    $limit = 5
+    if ($LimitText) {
+        if (-not [int]::TryParse($LimitText.Trim(), [ref]$limit)) {
+            throw "Dashboard limit must be a whole number."
+        }
+        if ($limit -lt 1) {
+            throw "Dashboard limit must be at least 1."
+        }
+    }
+
+    Write-Output "Minimal Notes Dashboard"
+    Write-Output ("Generated: {0}" -f (Get-Date -Format "yyyy-MM-dd HH:mm"))
+    Write-Output ""
+
+    $overdueAgenda = @(Get-AgendaItems -Mode overdue | Sort-Object AnchorDate, Title | Select-Object -First $limit | ForEach-Object { Format-AgendaItemLine -Item $_ })
+    $todayAgenda = @(Get-AgendaItems -Mode today | Sort-Object AnchorDate, Title | Select-Object -First $limit | ForEach-Object { Format-AgendaItemLine -Item $_ })
+    $overdueTasks = @(Get-Tasks -State overdue | Select-Object -First $limit | ForEach-Object { Format-TaskLine -Task $_ })
+    $todayTasks = @(Get-Tasks -State today | Select-Object -First $limit | ForEach-Object { Format-TaskLine -Task $_ })
+    $recentNotes = @(Get-RecentNotes -Limit $limit | ForEach-Object { "{0}  {1}  {2}" -f $_.LastWrite.ToString("yyyy-MM-dd HH:mm"), $_.Title, $_.RelativePath })
+    $unresolved = @(Get-UnresolvedLinks | Select-Object -First $limit | ForEach-Object { "{0} -> [[{1}]]  suggested {2}" -f $_.Source, $_.Target, $_.SuggestedPath })
+
+    Format-Section -Title "Agenda Overdue" -Lines $overdueAgenda
+    Format-Section -Title "Agenda Today" -Lines $todayAgenda
+    Format-Section -Title "Tasks Overdue" -Lines $overdueTasks
+    Format-Section -Title "Tasks Today" -Lines $todayTasks
+    Format-Section -Title "Recent Notes" -Lines $recentNotes
+    Format-Section -Title "Unresolved Links" -Lines $unresolved
+}
+
+function Get-ReportWindow {
+    param([ValidateSet("daily", "weekly", "monthly")][string]$Period = "weekly")
+
+    $today = (Get-Date).Date
+    switch ($Period) {
+        "daily" {
+            $start = $today
+            $end = $start.AddDays(1)
+        }
+        "weekly" {
+            $offset = ([int]$today.DayOfWeek + 6) % 7
+            $start = $today.AddDays(-$offset)
+            $end = $start.AddDays(7)
+        }
+        "monthly" {
+            $start = Get-Date -Year $today.Year -Month $today.Month -Day 1 -Hour 0 -Minute 0 -Second 0
+            $end = $start.AddMonths(1)
+        }
+    }
+
+    [pscustomobject]@{
+        Start  = $start
+        End    = $end
+        Period = $Period
+    }
+}
+
+function Show-Report {
+    param([string]$PeriodText)
+
+    $period = if ($PeriodText) { $PeriodText.Trim().ToLowerInvariant() } else { "weekly" }
+    if ($period -notin @("daily", "weekly", "monthly")) {
+        throw "Report period must be one of: daily, weekly, monthly."
+    }
+
+    $window = Get-ReportWindow -Period $period
+    $changedNotes = @(Get-AllNotes | Where-Object { $_.LastWrite -ge $window.Start -and $_.LastWrite -lt $window.End })
+    $openTasks = @(Get-Tasks -State open)
+    $todayTasks = @(Get-Tasks -State today)
+    $overdueTasks = @(Get-Tasks -State overdue)
+    $todayAgenda = @(Get-AgendaItems -Mode today)
+    $overdueAgenda = @(Get-AgendaItems -Mode overdue)
+    $unresolvedLinks = @(Get-UnresolvedLinks)
+
+    Write-Output ("{0} Report" -f ([cultureinfo]::InvariantCulture.TextInfo.ToTitleCase($period)))
+    Write-Output ("Window: {0} to {1}" -f $window.Start.ToString("yyyy-MM-dd"), $window.End.AddDays(-1).ToString("yyyy-MM-dd"))
+    Write-Output ("Notes changed: {0}" -f $changedNotes.Count)
+    Write-Output ("Open tasks: {0}" -f $openTasks.Count)
+    Write-Output ("Tasks due today: {0}" -f $todayTasks.Count)
+    Write-Output ("Overdue tasks: {0}" -f $overdueTasks.Count)
+    Write-Output ("Agenda today: {0}" -f $todayAgenda.Count)
+    Write-Output ("Agenda overdue: {0}" -f $overdueAgenda.Count)
+    Write-Output ("Unresolved links: {0}" -f $unresolvedLinks.Count)
+    Write-Output ""
+
+    $recentChanged = @($changedNotes |
+        Sort-Object LastWrite -Descending |
+        Select-Object -First 5 |
+        ForEach-Object { "{0}  {1}" -f $_.LastWrite.ToString("yyyy-MM-dd HH:mm"), $_.Title })
+    Format-Section -Title "Changed Notes" -Lines $recentChanged
+}
+
+function Show-Review {
+    param([string]$PeriodText)
+
+    $period = if ($PeriodText) { $PeriodText.Trim().ToLowerInvariant() } else { "daily" }
+    if ($period -notin @("daily", "weekly")) {
+        throw "Review period must be one of: daily, weekly."
+    }
+
+    $window = Get-ReportWindow -Period $period
+    $changedNotes = @(Get-AllNotes | Where-Object { $_.LastWrite -ge $window.Start -and $_.LastWrite -lt $window.End })
+
+    Write-Output ("{0} Review" -f ([cultureinfo]::InvariantCulture.TextInfo.ToTitleCase($period)))
+    Write-Output ("Window: {0} to {1}" -f $window.Start.ToString("yyyy-MM-dd"), $window.End.AddDays(-1).ToString("yyyy-MM-dd"))
+    Write-Output ""
+
+    Format-Section -Title "Checklist" -Lines @(
+        "[ ] Process inbox captures"
+        "[ ] Review overdue commitments"
+        "[ ] Clear unresolved links"
+        "[ ] Scan recent note activity"
+    )
+
+    Format-Section -Title "Overdue Tasks" -Lines @(
+        @(Get-Tasks -State overdue | Select-Object -First 5 | ForEach-Object { Format-TaskLine -Task $_ })
+    )
+    Format-Section -Title "Agenda Today" -Lines @(
+        @(Get-AgendaItems -Mode today | Sort-Object AnchorDate, Title | Select-Object -First 5 | ForEach-Object { Format-AgendaItemLine -Item $_ })
+    )
+    Format-Section -Title "Changed Notes" -Lines @(
+        @($changedNotes | Sort-Object LastWrite -Descending | Select-Object -First 5 | ForEach-Object { "{0}  {1}" -f $_.LastWrite.ToString("yyyy-MM-dd HH:mm"), $_.Title })
+    )
+    Format-Section -Title "Unresolved Links" -Lines @(
+        @(Get-UnresolvedLinks | Select-Object -First 5 | ForEach-Object { "{0} -> [[{1}]]" -f $_.Source, $_.Target })
+    )
+}
+
 function Rename-Note {
     param(
         [Parameter(Mandatory)][string]$OldName,
@@ -1528,6 +1770,102 @@ function Open-DailyNote {
     Open-InEditor -Path $path
 }
 
+function Get-WeeklyNotePath {
+    param([datetime]$Date = (Get-Date))
+
+    $weeklyDir = Join-Path $Script:VaultRoot "weekly"
+    $weekYear = [System.Globalization.ISOWeek]::GetYear($Date)
+    $weekNumber = [System.Globalization.ISOWeek]::GetWeekOfYear($Date)
+    return Join-Path $weeklyDir ("{0}-W{1}.md" -f $weekYear, $weekNumber.ToString("00"))
+}
+
+function Ensure-WeeklyNoteExists {
+    param([datetime]$Date = (Get-Date))
+
+    $weeklyDir = Join-Path $Script:VaultRoot "weekly"
+    if (-not (Test-Path -LiteralPath $weeklyDir)) {
+        New-Item -ItemType Directory -Path $weeklyDir -Force | Out-Null
+    }
+
+    $path = Get-WeeklyNotePath -Date $Date
+    if (-not (Test-Path -LiteralPath $path)) {
+        $weekYear = [System.Globalization.ISOWeek]::GetYear($Date)
+        $weekNumber = [System.Globalization.ISOWeek]::GetWeekOfYear($Date)
+        $content = @(
+            "# {0}-W{1}" -f $weekYear, $weekNumber.ToString("00")
+            ""
+            "## Priorities"
+            ""
+            "## Notes"
+            ""
+            "## Review"
+            ""
+        )
+        Set-Content -LiteralPath $path -Value $content -Encoding utf8
+    }
+
+    return $path
+}
+
+function Open-WeeklyNote {
+    param([string]$DateText)
+
+    $date = if ($DateText) {
+        [datetime]::Parse($DateText)
+    } else {
+        Get-Date
+    }
+
+    $path = Ensure-WeeklyNoteExists -Date $date
+    Open-InEditor -Path $path
+}
+
+function Get-MonthlyNotePath {
+    param([datetime]$Date = (Get-Date))
+
+    $monthlyDir = Join-Path $Script:VaultRoot "monthly"
+    return Join-Path $monthlyDir ("{0}.md" -f $Date.ToString("yyyy-MM"))
+}
+
+function Ensure-MonthlyNoteExists {
+    param([datetime]$Date = (Get-Date))
+
+    $monthlyDir = Join-Path $Script:VaultRoot "monthly"
+    if (-not (Test-Path -LiteralPath $monthlyDir)) {
+        New-Item -ItemType Directory -Path $monthlyDir -Force | Out-Null
+    }
+
+    $path = Get-MonthlyNotePath -Date $Date
+    if (-not (Test-Path -LiteralPath $path)) {
+        $content = @(
+            "# {0}" -f $Date.ToString("yyyy-MM")
+            ""
+            "## Goals"
+            ""
+            "## Notes"
+            ""
+            "## Review"
+            ""
+        )
+        Set-Content -LiteralPath $path -Value $content -Encoding utf8
+    }
+
+    return $path
+}
+
+function Open-MonthlyNote {
+    param([string]$DateText)
+
+    $date = if ($DateText) {
+        [datetime]::Parse($DateText)
+    } else {
+        Get-Date
+    }
+
+    $path = Ensure-MonthlyNoteExists -Date $date
+    Open-InEditor -Path $path
+}
+
 function Get-DailyNotePath {
     param([datetime]$Date = (Get-Date))
 
@@ -1577,6 +1915,173 @@ function Ensure-InboxExists {
     }
 
     return $path
+}
+
+function Get-RelatedNotes {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [int]$Limit = 10
+    )
+
+    $path = Resolve-Note -Name $Name
+    if (-not $path) {
+        throw "Note not found: $Name"
+    }
+
+    $notes = @(Get-AllNotes)
+    $targetNote = $notes | Where-Object { $_.Path -eq $path } | Select-Object -First 1
+    $backlinkMap = Get-BacklinkMap
+    $targetOutgoing = @(Get-ResolvedLinkPathsForNote -Path $path)
+    $targetOutgoingSet = @{}
+    foreach ($item in $targetOutgoing) { $targetOutgoingSet[$item] = $true }
+    $targetIncoming = if ($backlinkMap.ContainsKey($path)) { @($backlinkMap[$path]) } else { @() }
+    $targetIncomingSet = @{}
+    foreach ($item in $targetIncoming) { $targetIncomingSet[$item] = $true }
+    $targetTags = @(Get-NoteTags -Path $path | Sort-Object -Unique)
+
+    $results = foreach ($note in $notes) {
+        if ($note.Path -eq $path) {
+            continue
+        }
+
+        $score = 0
+        $reasons = @()
+        $candidateOutgoing = @(Get-ResolvedLinkPathsForNote -Path $note.Path)
+        $candidateTags = @(Get-NoteTags -Path $note.Path | Sort-Object -Unique)
+
+        if ($candidateOutgoing -contains $path) {
+            $score += 5
+            $reasons += "links here"
+        }
+        if ($targetOutgoing -contains $note.Path) {
+            $score += 4
+            $reasons += "linked from target"
+        }
+
+        $sharedOutgoing = @($candidateOutgoing | Where-Object { $targetOutgoingSet.ContainsKey($_) })
+        if ($sharedOutgoing.Count -gt 0) {
+            $score += $sharedOutgoing.Count
+            $reasons += ("shared links {0}" -f $sharedOutgoing.Count)
+        }
+
+        if ($targetIncomingSet.ContainsKey($note.Path)) {
+            $score += 2
+            $reasons += "shared backlink neighborhood"
+        }
+
+        $sharedTags = @($candidateTags | Where-Object { $_ -in $targetTags })
+        if ($sharedTags.Count -gt 0) {
+            $score += ($sharedTags.Count * 2)
+            $reasons += ("shared tags {0}" -f ($sharedTags -join ", "))
+        }
+
+        if ($score -gt 0) {
+            [pscustomobject]@{
+                Score  = $score
+                Title  = $note.Title
+                Path   = $note.RelativePath
+                Reasons = $reasons
+            }
+        }
+    }
+
+    return @($results |
+        Sort-Object @{ Expression = "Score"; Descending = $true }, @{ Expression = "Title"; Descending = $false } |
+        Select-Object -First $Limit)
+}
+
+function Show-RelatedNotes {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [string]$LimitText
+    )
+
+    $limit = 10
+    if ($LimitText) {
+        if (-not [int]::TryParse($LimitText.Trim(), [ref]$limit)) {
+            throw "Related limit must be a whole number."
+        }
+        if ($limit -lt 1) {
+            throw "Related limit must be at least 1."
+        }
+    }
+
+    foreach ($item in (Get-RelatedNotes -Name $Name -Limit $limit)) {
+        "{0}  {1}  [score {2}]  {3}" -f $item.Title, $item.Path, $item.Score, ($item.Reasons -join ", ")
+    }
+}
+
+function ConvertTo-MermaidNodeId {
+    param([Parameter(Mandatory)][string]$Path)
+
+    return "n_" + ([regex]::Replace((Normalize-NoteReference -Reference $Path), '[^a-zA-Z0-9_]', '_'))
+}
+
+function ConvertTo-MermaidLabel {
+    param([Parameter(Mandatory)][string]$Text)
+
+    return $Text.Replace('"', "'")
+}
+
+function Show-Graph {
+    param([string]$NameText)
+
+    $notes = @(Get-AllNotes)
+    $backlinkMap = Get-BacklinkMap
+    $edges = New-Object System.Collections.Generic.List[string]
+    $includedPaths = New-Object System.Collections.Generic.HashSet[string]
+
+    if (-not $NameText -or $NameText.Trim().ToLowerInvariant() -eq "--all") {
+        foreach ($note in $notes) {
+            [void]$includedPaths.Add($note.Path)
+            foreach ($targetPath in (Get-ResolvedLinkPathsForNote -Path $note.Path)) {
+                [void]$includedPaths.Add($targetPath)
+                $edges.Add(("{0}[`"{1}`"] --> {2}[`"{3}`"]" -f
+                    (ConvertTo-MermaidNodeId -Path $note.Path),
+                    (ConvertTo-MermaidLabel -Text $note.Title),
+                    (ConvertTo-MermaidNodeId -Path $targetPath),
+                    (ConvertTo-MermaidLabel -Text (Get-NoteTitle -Path $targetPath))))
+            }
+        }
+    } else {
+        $targetPath = Resolve-Note -Name $NameText
+        if (-not $targetPath) {
+            throw "Note not found: $NameText"
+        }
+
+        [void]$includedPaths.Add($targetPath)
+        $targetTitle = Get-NoteTitle -Path $targetPath
+        foreach ($target in (Get-ResolvedLinkPathsForNote -Path $targetPath)) {
+            [void]$includedPaths.Add($target)
+            $edges.Add(("{0}[`"{1}`"] --> {2}[`"{3}`"]" -f
+                (ConvertTo-MermaidNodeId -Path $targetPath),
+                (ConvertTo-MermaidLabel -Text $targetTitle),
+                (ConvertTo-MermaidNodeId -Path $target),
+                (ConvertTo-MermaidLabel -Text (Get-NoteTitle -Path $target))))
+        }
+
+        if ($backlinkMap.ContainsKey($targetPath)) {
+            foreach ($source in @($backlinkMap[$targetPath])) {
+                [void]$includedPaths.Add($source)
+                $edges.Add(("{0}[`"{1}`"] --> {2}[`"{3}`"]" -f
+                    (ConvertTo-MermaidNodeId -Path $source),
+                    (ConvertTo-MermaidLabel -Text (Get-NoteTitle -Path $source)),
+                    (ConvertTo-MermaidNodeId -Path $targetPath),
+                    (ConvertTo-MermaidLabel -Text $targetTitle)))
+            }
+        }
+    }
+
+    Write-Output "graph TD"
+    foreach ($path in @($includedPaths)) {
+        $note = $notes | Where-Object { $_.Path -eq $path } | Select-Object -First 1
+        if ($note) {
+            Write-Output ("{0}[`"{1}`"]" -f (ConvertTo-MermaidNodeId -Path $path), (ConvertTo-MermaidLabel -Text $note.Title))
+        }
+    }
+    foreach ($edge in @($edges | Sort-Object -Unique)) {
+        Write-Output $edge
+    }
 }
 
 function Add-CaptureEntry {
@@ -1662,13 +2167,38 @@ function Invoke-MinimalNotesCli {
             $limit = if ($Arguments.Count -gt 0) { $Arguments -join " " } else { $null }
             Show-RecentNotes -LimitText $limit
         }
+        "dashboard" {
+            $limit = if ($Arguments.Count -gt 0) { $Arguments -join " " } else { $null }
+            Show-Dashboard -LimitText $limit
+        }
         "agenda" {
             $mode = if ($Arguments.Count -gt 0) { $Arguments -join " " } else { $null }
             Show-Agenda -ModeText $mode
         }
+        "report" {
+            $period = if ($Arguments.Count -gt 0) { $Arguments -join " " } else { $null }
+            Show-Report -PeriodText $period
+        }
+        "review" {
+            $period = if ($Arguments.Count -gt 0) { $Arguments -join " " } else { $null }
+            Show-Review -PeriodText $period
+        }
         "tasks" {
             $state = if ($Arguments.Count -gt 0) { $Arguments -join " " } else { $null }
             Show-Tasks -StateText $state
+        }
+        "related" {
+            if ($Arguments.Count -eq 0) {
+                throw "Usage: ./note.ps1 related `"My Note`" [limit]"
+            }
+
+            $name = $Arguments[0]
+            $limit = if ($Arguments.Count -gt 1) { $Arguments[1] } else { $null }
+            Show-RelatedNotes -Name $name -LimitText $limit
+        }
+        "graph" {
+            $name = if ($Arguments.Count -gt 0) { $Arguments -join " " } else { $null }
+            Show-Graph -NameText $name
         }
         "template" {
             $templateArgs = @($Arguments | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
@@ -1766,6 +2296,14 @@ function Invoke-MinimalNotesCli {
         "daily" {
             $dateText = if ($Arguments.Count -gt 0) { $Arguments -join " " } else { $null }
             Open-DailyNote -DateText $dateText
+        }
+        "weekly" {
+            $dateText = if ($Arguments.Count -gt 0) { $Arguments -join " " } else { $null }
+            Open-WeeklyNote -DateText $dateText
+        }
+        "monthly" {
+            $dateText = if ($Arguments.Count -gt 0) { $Arguments -join " " } else { $null }
+            Open-MonthlyNote -DateText $dateText
         }
         "path" {
             Write-Output (Get-MinimalNotesVaultPath)

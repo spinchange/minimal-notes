@@ -328,6 +328,76 @@ Describe "Minimal Notes CLI" {
         $lines[1].ToString() | Should -Match "Second  second.md"
     }
 
+    It "shows a dashboard with multiple vault sections" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "project.md") -Value @(
+            "---",
+            ("due: {0}" -f (Get-Date).AddDays(-1).ToString("yyyy-MM-dd")),
+            ("scheduled: {0}" -f (Get-Date).ToString("yyyy-MM-dd")),
+            "priority: high",
+            "---",
+            "",
+            "# Project",
+            "",
+            "- [ ] Fix the urgent thing",
+            "",
+            "Related to [[Missing Note]]."
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("dashboard", "3")
+
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Match "Minimal Notes Dashboard"
+        $result.Text | Should -Match "== Agenda Overdue =="
+        $result.Text | Should -Match "== Tasks Overdue =="
+        $result.Text | Should -Match "== Unresolved Links =="
+        $result.Text | Should -Match "Missing Note"
+        $result.Text | Should -Match "Fix the urgent thing"
+    }
+
+    It "shows a weekly report summary" {
+        $changedPath = Join-Path $script:VaultPath "weekly-report.md"
+        Set-Content -LiteralPath $changedPath -Value @(
+            "---",
+            ("due: {0}" -f (Get-Date).ToString("yyyy-MM-dd")),
+            "---",
+            "",
+            "# Weekly Report",
+            "",
+            "- [ ] Follow up"
+        )
+        (Get-Item -LiteralPath $changedPath).LastWriteTime = (Get-Date).AddDays(-1)
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("report", "weekly")
+
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Match "Weekly Report"
+        $result.Text | Should -Match "Notes changed: 1"
+        $result.Text | Should -Match "Open tasks: 1"
+        $result.Text | Should -Match "Changed Notes"
+    }
+
+    It "shows a daily review with checklist and focus sections" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "review-note.md") -Value @(
+            "---",
+            ("due: {0}" -f (Get-Date).AddDays(-1).ToString("yyyy-MM-dd")),
+            "---",
+            "",
+            "# Review Note",
+            "",
+            "- [ ] Clear the blocker",
+            "",
+            "Reference [[Missing Review Link]]."
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("review")
+
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Match "Daily Review"
+        $result.Text | Should -Match "\[ \] Process inbox captures"
+        $result.Text | Should -Match "== Overdue Tasks =="
+        $result.Text | Should -Match "Missing Review Link"
+    }
+
     It "shows active agenda items from scheduled and due frontmatter" {
         Set-Content -LiteralPath (Join-Path $script:VaultPath "project-a.md") -Value @(
             "---",
@@ -510,6 +580,53 @@ Describe "Minimal Notes CLI" {
         $result.Text | Should -Match "due $yesterday"
         $result.Text | Should -Match "priority urgent"
         $result.Text | Should -Not -Match "Fix today item"
+    }
+
+    It "creates weekly and monthly notes without opening an editor" {
+        $weeklyResult = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("weekly", "2026-03-12")
+        $monthlyResult = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("monthly", "2026-03-12")
+        $weeklyPath = Join-Path (Join-Path $script:VaultPath "weekly") "2026-W11.md"
+        $monthlyPath = Join-Path (Join-Path $script:VaultPath "monthly") "2026-03.md"
+
+        $weeklyResult.ExitCode | Should -Be 0
+        $weeklyResult.Text | Should -Be $weeklyPath
+        (Get-Content -LiteralPath $weeklyPath -Raw) | Should -Match "## Priorities"
+
+        $monthlyResult.ExitCode | Should -Be 0
+        $monthlyResult.Text | Should -Be $monthlyPath
+        (Get-Content -LiteralPath $monthlyPath -Raw) | Should -Match "## Goals"
+    }
+
+    It "suggests related notes and prints a local graph" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "project-a.md") -Value @(
+            "# Project A",
+            "",
+            "Tags: #work #planning",
+            "",
+            "See [[Shared Note]]."
+        )
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "project-b.md") -Value @(
+            "# Project B",
+            "",
+            "Tags: #work",
+            "",
+            "See [[Project A]] and [[Shared Note]]."
+        )
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "shared-note.md") -Value @(
+            "# Shared Note"
+        )
+
+        $relatedResult = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("related", "Project A")
+        $graphResult = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("graph", "Project A")
+
+        $relatedResult.ExitCode | Should -Be 0
+        $relatedResult.Text | Should -Match "Project B"
+        $relatedResult.Text | Should -Match "score"
+
+        $graphResult.ExitCode | Should -Be 0
+        $graphResult.Text | Should -Match "graph TD"
+        $graphResult.Text | Should -Match "Project A"
+        $graphResult.Text | Should -Match "Shared Note"
     }
 
     It "reads and updates frontmatter properties" {

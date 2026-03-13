@@ -15,11 +15,17 @@ All notable changes to this project are documented here.
 - `new "Note" --template name` with placeholder expansion for title, slug, and timestamps
 - reusable `MinimalNotes` PowerShell module with a thin `note.ps1` CLI wrapper
 - module manifest and smoke test for importing the public module entry points
+- `dashboard` command for a compact multi-section vault overview
+- `report` and `review` commands for recent activity summaries and structured check-ins
+- `weekly` and `monthly` note workflows alongside the existing daily notes
+- `related` note suggestions from links and shared tags
+- `graph` command that prints Mermaid link graphs for one note or the whole vault
 
 ### Changed
 
 - roadmap and README examples updated to reflect the new agenda, task, and template workflows
 - project structure now separates reusable logic from the CLI script
+- README and roadmap updated to reflect dashboards, reviews, calendar notes, and graph tooling
 
 ## Since The Initial Commit
 
@@ -49,6 +55,9 @@ All notable changes to this project are documented here.
 - metadata-aware task collection from markdown checkboxes
 - agenda from frontmatter dates
 - reusable note templates with placeholder expansion
+- dashboard, reporting, and review workflows
+- daily, weekly, and monthly note workflows
+- related-note suggestions and Mermaid graph output
 
 ### Quality and reliability
 
@@ -59,6 +68,7 @@ All notable changes to this project are documented here.
 - CI workflow for GitHub Actions
 - `.gitattributes` for line-ending normalization
 - module import smoke coverage
+- broader workflow coverage for dashboard, report/review, calendar notes, and graph tooling
 
 ### Repository polish
 

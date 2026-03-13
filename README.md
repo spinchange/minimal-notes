@@ -25,6 +25,9 @@ This project aims for the useful core of Obsidian without the heavyweight app sh
 - agenda from frontmatter dates
 - metadata-aware task collection from markdown checkboxes
 - reusable note templates with placeholder expansion
+- dashboard, report, and review views
+- weekly and monthly notes
+- related-note suggestions and Mermaid graph output
 - frontmatter properties, tags, and aliases
 - safe note rename with automatic link updates
 - terminal preview
@@ -39,6 +42,8 @@ pwsh -NoProfile -File .\note.ps1 new "Project Ideas"
 pwsh -NoProfile -File .\note.ps1 capture "remember this"
 pwsh -NoProfile -File .\note.ps1 template new meeting
 pwsh -NoProfile -File .\note.ps1 new "Sprint Review" --template meeting
+pwsh -NoProfile -File .\note.ps1 dashboard
+pwsh -NoProfile -File .\note.ps1 weekly
 pwsh -NoProfile -File .\note.ps1 tasks
 pwsh -NoProfile -File .\note.ps1 tasks today
 pwsh -NoProfile -File .\note.ps1 props "Project Ideas" set status active
@@ -78,9 +83,14 @@ pick       Interactively choose a note to open.
 capture    Append a quick note to inbox.md or today's daily note.
 orphans    List notes with no inbound wiki links.
 recent     List recently modified notes, newest first.
+dashboard  Show a compact multi-section vault overview.
 agenda     Show notes with due or scheduled frontmatter dates.
+report     Summarize recent note and task activity for a time window.
+review     Show a daily or weekly review checklist and focus items.
 tasks      Collect markdown checkbox tasks across the vault.
           Supports open, done, all, today, and overdue views.
+related    Suggest notes related to a target note by links and tags.
+graph      Print a Mermaid note-link graph for one note or the full vault.
 template   List, preview, or create note templates.
 props      Read or update frontmatter properties for a note.
 rename     Rename a note file and update wiki links that point to it.
@@ -91,6 +101,8 @@ backlinks  Show notes that link to a note.
 tags       List all tags, or notes containing a tag.
 preview    Print a note to the terminal.
 daily      Open or create a daily note at daily/YYYY-MM-DD.md.
+weekly     Open or create a weekly note at weekly/YYYY-Www.md.
+monthly    Open or create a monthly note at monthly/YYYY-MM.md.
 path       Print the current vault path.
 help       Show this help.
 ```
@@ -158,10 +170,13 @@ pwsh -NoProfile -File .\note.ps1 capture "remember to simplify the picker"
 pwsh -NoProfile -File .\note.ps1 capture daily "ship the prototype"
 pwsh -NoProfile -File .\note.ps1 orphans
 pwsh -NoProfile -File .\note.ps1 recent 5
+pwsh -NoProfile -File .\note.ps1 dashboard
 pwsh -NoProfile -File .\note.ps1 agenda
 pwsh -NoProfile -File .\note.ps1 tasks
 pwsh -NoProfile -File .\note.ps1 tasks today
 pwsh -NoProfile -File .\note.ps1 tasks overdue
+pwsh -NoProfile -File .\note.ps1 review
+pwsh -NoProfile -File .\note.ps1 report weekly
 ```
 
 Read or update frontmatter properties:
@@ -228,6 +243,18 @@ Maintain link structure:
 pwsh -NoProfile -File .\note.ps1 rename "Project Ideas" "Project Archive"
 pwsh -NoProfile -File .\note.ps1 unresolved
 pwsh -NoProfile -File .\note.ps1 create-unresolved all
+pwsh -NoProfile -File .\note.ps1 related "Project Archive"
+pwsh -NoProfile -File .\note.ps1 graph "Project Archive"
+```
+
+Calendar and overview workflows:
+
+```powershell
+pwsh -NoProfile -File .\note.ps1 dashboard
+pwsh -NoProfile -File .\note.ps1 report monthly
+pwsh -NoProfile -File .\note.ps1 review weekly
+pwsh -NoProfile -File .\note.ps1 weekly
+pwsh -NoProfile -File .\note.ps1 monthly
 ```
 
 ## Roadmap
@@ -240,17 +267,18 @@ Focus: turn frontmatter into day-to-day utility.
 - ~~smarter `tasks` that include note context such as project, status, and priority~~
 - ~~note templates for common frontmatter and note shapes~~
 - better `props` support, including `unset`, clearer list editing, and stronger validation
-- weekly and monthly note workflows built on top of the existing daily note model
+- ~~weekly and monthly note workflows built on top of the existing daily note model~~
 
 ### Phase 2: Retrieval and structure
 
 Focus: make the vault easier to navigate as it grows.
 
-- `related <note>` suggestions from links, tags, aliases, and text overlap
+- ~~`related <note>` suggestions from links, tags, aliases, and text overlap~~
 - stricter orphan and stale-note views
-- local note maps or Mermaid graph export
+- ~~local note maps or Mermaid graph export~~
 - saved queries and richer search filters that combine text, tags, props, and task state
-- dashboards that summarize recent notes, tasks, unresolved links, and due items
+- ~~dashboards that summarize recent notes, tasks, unresolved links, and due items~~
+- ~~reports or review views built from agenda, task, and note activity~~
 
 ### Phase 3: Refactoring tools
 
@@ -277,8 +305,8 @@ Focus: keep the codebase maintainable as features expand.
 2. ~~metadata-aware `tasks`~~
 3. ~~templates~~
 4. ~~module refactor~~
-5. dashboards or reports
-6. related/graph tooling
+5. ~~dashboards or reports~~
+6. ~~related/graph tooling~~
 7. merge/split/repair refactoring commands
 
 ## Testing
@@ -297,7 +325,7 @@ Install-Module Pester -Scope CurrentUser -Force -SkipPublisherCheck
 
 Current local status:
 
-- 36 tests passing
+- 41 tests passing
 - 0 failures
 
 ## License
