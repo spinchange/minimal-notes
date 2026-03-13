@@ -28,6 +28,8 @@ All notable changes to this project are documented here.
 - `stale` command for listing notes untouched for at least N days
 - read-only saved queries with `query save|list|show|run|delete`
 - preview-only `dedupe` output for likely duplicate notes
+- JSON config file support with `config init|show|path`
+- config-backed defaults for values like stale threshold and dashboard limit
 
 ### Changed
 
@@ -35,6 +37,7 @@ All notable changes to this project are documented here.
 - project structure now separates reusable logic from the CLI script
 - README and roadmap updated to reflect dashboards, reviews, calendar notes, and graph tooling
 - README and roadmap updated to reflect stale views, saved queries, and dedupe previews
+- README and roadmap updated to reflect config-file support and env override precedence
 
 ## Since The Initial Commit
 
@@ -70,6 +73,7 @@ All notable changes to this project are documented here.
 - merge, split, and repair-link refactoring workflows
 - stronger validated property workflows for frontmatter editing
 - stale-note views, saved queries, and preview-only dedupe
+- config-backed defaults and initialization workflow
 
 ### Quality and reliability
 
@@ -84,6 +88,7 @@ All notable changes to this project are documented here.
 - regression coverage for merge, split, and link-repair commands
 - regression coverage for props unset and validation rules
 - regression coverage for stale, saved-query, and dedupe workflows
+- regression coverage for config initialization and default resolution
 
 ### Repository polish
 

@@ -21,6 +21,7 @@ function script:Invoke-NoteCliSubprocess {
     param(
         [string]$VaultPath,
         [string]$TemplatesPath,
+        [string]$ConfigPath,
         [string[]]$Arguments
     )
 
@@ -30,6 +31,11 @@ function script:Invoke-NoteCliSubprocess {
         $env:MINIMAL_NOTES_TEMPLATES = $TemplatesPath
     } else {
         Remove-Item Env:MINIMAL_NOTES_TEMPLATES -ErrorAction SilentlyContinue
+    }
+    if ($ConfigPath) {
+        $env:MINIMAL_NOTES_CONFIG = $ConfigPath
+    } else {
+        Remove-Item Env:MINIMAL_NOTES_CONFIG -ErrorAction SilentlyContinue
     }
 
     $output = & pwsh -NoProfile -File $global:MinimalNotes_ScriptPath @Arguments 2>&1
@@ -46,11 +52,13 @@ function script:Invoke-NoteCli {
     param(
         [string]$VaultPath,
         [string]$TemplatesPath,
+        [string]$ConfigPath,
         [string[]]$Arguments
     )
 
     $originalVault = $env:MINIMAL_NOTES_VAULT
     $originalTemplates = $env:MINIMAL_NOTES_TEMPLATES
+    $originalConfig = $env:MINIMAL_NOTES_CONFIG
     $originalNoOpen = $env:MINIMAL_NOTES_NO_OPEN
 
     $env:MINIMAL_NOTES_VAULT = $VaultPath
@@ -59,6 +67,11 @@ function script:Invoke-NoteCli {
         $env:MINIMAL_NOTES_TEMPLATES = $TemplatesPath
     } else {
         Remove-Item Env:MINIMAL_NOTES_TEMPLATES -ErrorAction SilentlyContinue
+    }
+    if ($ConfigPath) {
+        $env:MINIMAL_NOTES_CONFIG = $ConfigPath
+    } else {
+        Remove-Item Env:MINIMAL_NOTES_CONFIG -ErrorAction SilentlyContinue
     }
 
     try {
@@ -72,6 +85,7 @@ function script:Invoke-NoteCli {
     } finally {
         if ($null -ne $originalVault) { $env:MINIMAL_NOTES_VAULT = $originalVault } else { Remove-Item Env:MINIMAL_NOTES_VAULT -ErrorAction SilentlyContinue }
         if ($null -ne $originalTemplates) { $env:MINIMAL_NOTES_TEMPLATES = $originalTemplates } else { Remove-Item Env:MINIMAL_NOTES_TEMPLATES -ErrorAction SilentlyContinue }
+        if ($null -ne $originalConfig) { $env:MINIMAL_NOTES_CONFIG = $originalConfig } else { Remove-Item Env:MINIMAL_NOTES_CONFIG -ErrorAction SilentlyContinue }
         if ($null -ne $originalNoOpen) { $env:MINIMAL_NOTES_NO_OPEN = $originalNoOpen } else { Remove-Item Env:MINIMAL_NOTES_NO_OPEN -ErrorAction SilentlyContinue }
     }
 
@@ -118,6 +132,7 @@ Describe "Minimal Notes CLI" {
         Remove-TestVault -Path $script:VaultPath
         Remove-Item Env:MINIMAL_NOTES_VAULT -ErrorAction SilentlyContinue
         Remove-Item Env:MINIMAL_NOTES_TEMPLATES -ErrorAction SilentlyContinue
+        Remove-Item Env:MINIMAL_NOTES_CONFIG -ErrorAction SilentlyContinue
         Remove-Item Env:MINIMAL_NOTES_NO_OPEN -ErrorAction SilentlyContinue
     }
 
@@ -390,6 +405,43 @@ Describe "Minimal Notes CLI" {
         (Get-Item -LiteralPath $freshPath).LastWriteTime = (Get-Date).AddDays(-5)
 
         $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("stale", "30")
+
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Match "Stale  stale.md"
+        $result.Text | Should -Not -Match "Fresh"
+    }
+
+    It "initializes and shows the config file" {
+        $configPath = Join-Path $script:VaultPath "minimal-notes.config.json"
+
+        $initResult = Invoke-NoteCli -VaultPath $script:VaultPath -ConfigPath $configPath -Arguments @("config", "init")
+        $showResult = Invoke-NoteCli -VaultPath $script:VaultPath -ConfigPath $configPath -Arguments @("config")
+
+        $initResult.ExitCode | Should -Be 0
+        $initResult.Text | Should -Be $configPath
+        (Test-Path -LiteralPath $configPath) | Should -Be $true
+        $showResult.Text | Should -Match "configPath: $([regex]::Escape($configPath))"
+        $showResult.Text | Should -Match "defaultStaleDays: 30"
+    }
+
+    It "uses config defaults when no explicit stale argument is provided" {
+        $configPath = Join-Path $script:VaultPath "minimal-notes.config.json"
+        Set-Content -LiteralPath $configPath -Value @'
+{
+  "defaults": {
+    "staleDays": 10
+  }
+}
+'@
+
+        $stalePath = Join-Path $script:VaultPath "stale.md"
+        $freshPath = Join-Path $script:VaultPath "fresh.md"
+        Set-Content -LiteralPath $stalePath -Value "# Stale"
+        Set-Content -LiteralPath $freshPath -Value "# Fresh"
+        (Get-Item -LiteralPath $stalePath).LastWriteTime = (Get-Date).AddDays(-15)
+        (Get-Item -LiteralPath $freshPath).LastWriteTime = (Get-Date).AddDays(-5)
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -ConfigPath $configPath -Arguments @("stale")
 
         $result.ExitCode | Should -Be 0
         $result.Text | Should -Match "Stale  stale.md"

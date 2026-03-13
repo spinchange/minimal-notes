@@ -31,6 +31,7 @@ This project aims for the useful core of Obsidian without the heavyweight app sh
 - merge, split, and repair-link refactoring tools
 - frontmatter properties, tags, aliases, and validation
 - stale-note views, saved queries, and preview-only dedupe
+- JSON config file with env-var override precedence
 - safe note rename with automatic link updates
 - terminal preview
 
@@ -50,6 +51,7 @@ pwsh -NoProfile -File .\note.ps1 merge "Draft" "Project Archive"
 pwsh -NoProfile -File .\note.ps1 props "Project Ideas" unset priority
 pwsh -NoProfile -File .\note.ps1 stale 60
 pwsh -NoProfile -File .\note.ps1 query save work-today tasks today
+pwsh -NoProfile -File .\note.ps1 config init
 pwsh -NoProfile -File .\note.ps1 tasks
 pwsh -NoProfile -File .\note.ps1 tasks today
 pwsh -NoProfile -File .\note.ps1 props "Project Ideas" set status active
@@ -90,6 +92,7 @@ capture    Append a quick note to inbox.md or today's daily note.
 orphans    List notes with no inbound wiki links.
 recent     List recently modified notes, newest first.
 stale      List notes untouched for at least N days.
+config     Show, initialize, or locate the JSON config file.
 dashboard  Show a compact multi-section vault overview.
 agenda     Show notes with due or scheduled frontmatter dates.
 report     Summarize recent note and task activity for a time window.
@@ -123,12 +126,15 @@ help       Show this help.
 
 ```powershell
 $env:MINIMAL_NOTES_VAULT = "C:\Users\user\Documents\notes"
+$env:MINIMAL_NOTES_CONFIG = "C:\Users\user\Documents\minimal-notes.config.json"
 $env:MINIMAL_NOTES_TEMPLATES = "C:\Users\user\Documents\note-templates"
 $env:MINIMAL_NOTES_EDITOR = "notepad.exe"
 $env:MINIMAL_NOTES_NO_OPEN = "1"
 ```
 
 If `MINIMAL_NOTES_EDITOR` is not set, the script tries `code` first and falls back to `notepad.exe`.
+
+Environment variables override config file values.
 
 ## Module use
 
@@ -138,6 +144,31 @@ You can use the reusable module directly:
 Import-Module .\MinimalNotes.psd1 -Force
 Invoke-MinimalNotesCli -Command list
 Get-MinimalNotesVaultPath
+```
+
+## Config file
+
+Initialize a starter config:
+
+```powershell
+pwsh -NoProfile -File .\note.ps1 config init
+pwsh -NoProfile -File .\note.ps1 config
+```
+
+Example:
+
+```json
+{
+  "vault": "C:\\Users\\user\\Documents\\notes",
+  "templates": "C:\\Users\\user\\Documents\\note-templates",
+  "queries": "C:\\Users\\user\\Documents\\saved-queries.json",
+  "editor": "notepad.exe",
+  "noOpen": false,
+  "defaults": {
+    "staleDays": 30,
+    "dashboardLimit": 5
+  }
+}
 ```
 
 ## Example workflow
@@ -271,6 +302,7 @@ pwsh -NoProfile -File .\note.ps1 stale 45
 pwsh -NoProfile -File .\note.ps1 query save work-today tasks today
 pwsh -NoProfile -File .\note.ps1 query run work-today
 pwsh -NoProfile -File .\note.ps1 dedupe
+pwsh -NoProfile -File .\note.ps1 config
 ```
 
 Calendar and overview workflows:
@@ -322,7 +354,7 @@ Focus: keep the codebase maintainable as features expand.
 
 - ~~split the project into a reusable PowerShell module plus a thin CLI wrapper~~
 - add deeper parsing and unit tests alongside the current smoke tests
-- introduce a config file for vault defaults, editor, templates, and display preferences
+- ~~introduce a config file for vault defaults, editor, templates, and display preferences~~
 - improve performance for larger vaults, potentially with an optional lightweight index
 
 ### Suggested next build order
@@ -351,7 +383,7 @@ Install-Module Pester -Scope CurrentUser -Force -SkipPublisherCheck
 
 Current local status:
 
-- 50 tests passing
+- 52 tests passing
 - 0 failures
 
 ## License

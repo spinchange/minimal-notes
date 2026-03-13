@@ -3,11 +3,32 @@ $ErrorActionPreference = "Stop"
 
 function Initialize-MinimalNotesContext {
     $Script:ProjectRoot = $PSScriptRoot
-    $Script:VaultRoot = if ($env:MINIMAL_NOTES_VAULT) { $env:MINIMAL_NOTES_VAULT } else { Join-Path $Script:ProjectRoot "vault" }
-    $Script:TemplateRoot = if ($env:MINIMAL_NOTES_TEMPLATES) { $env:MINIMAL_NOTES_TEMPLATES } else { Join-Path $Script:ProjectRoot "templates" }
-    $Script:NoOpen = $env:MINIMAL_NOTES_NO_OPEN -in @("1", "true", "yes")
+    $Script:ConfigPath = Get-MinimalNotesConfigPath
+    $Script:Config = Get-MinimalNotesConfig
+    $Script:VaultRoot = if ($env:MINIMAL_NOTES_VAULT) {
+        $env:MINIMAL_NOTES_VAULT
+    } else {
+        [string](Get-ConfigValue -Config $Script:Config -Key "vault" -DefaultValue (Join-Path $Script:ProjectRoot "vault"))
+    }
+    $Script:TemplateRoot = if ($env:MINIMAL_NOTES_TEMPLATES) {
+        $env:MINIMAL_NOTES_TEMPLATES
+    } else {
+        [string](Get-ConfigValue -Config $Script:Config -Key "templates" -DefaultValue (Join-Path $Script:ProjectRoot "templates"))
+    }
+    $Script:QueriesPath = if ($env:MINIMAL_NOTES_QUERIES) {
+        $env:MINIMAL_NOTES_QUERIES
+    } else {
+        [string](Get-ConfigValue -Config $Script:Config -Key "queries" -DefaultValue (Join-Path $Script:ProjectRoot "saved-queries.json"))
+    }
+    $Script:NoOpen = if ($env:MINIMAL_NOTES_NO_OPEN) {
+        $env:MINIMAL_NOTES_NO_OPEN -in @("1", "true", "yes")
+    } else {
+        [bool](Get-ConfigValue -Config $Script:Config -Key "noOpen" -DefaultValue $false)
+    }
     $Script:DefaultEditor = if ($env:MINIMAL_NOTES_EDITOR) {
         $env:MINIMAL_NOTES_EDITOR
+    } elseif (Get-ConfigValue -Config $Script:Config -Key "editor") {
+        [string](Get-ConfigValue -Config $Script:Config -Key "editor")
     } elseif ($env:EDITOR) {
         $env:EDITOR
     } elseif (Get-Command code -ErrorAction SilentlyContinue) {
@@ -15,6 +36,8 @@ function Initialize-MinimalNotesContext {
     } else {
         "notepad.exe"
     }
+    $Script:DefaultStaleDays = [int](Get-DefaultConfigValue -Config $Script:Config -Key "staleDays" -DefaultValue 30)
+    $Script:DefaultDashboardLimit = [int](Get-DefaultConfigValue -Config $Script:Config -Key "dashboardLimit" -DefaultValue 5)
 }
 
 function Get-MinimalNotesVaultPath {
@@ -22,11 +45,65 @@ function Get-MinimalNotesVaultPath {
 }
 
 function Get-SavedQueriesPath {
-    if ($env:MINIMAL_NOTES_QUERIES) {
-        return $env:MINIMAL_NOTES_QUERIES
+    return $Script:QueriesPath
+}
+
+function Get-MinimalNotesConfigPath {
+    if ($env:MINIMAL_NOTES_CONFIG) {
+        return $env:MINIMAL_NOTES_CONFIG
     }
 
-    return Join-Path $Script:ProjectRoot "saved-queries.json"
+    return Join-Path $Script:ProjectRoot "minimal-notes.config.json"
+}
+
+function Get-MinimalNotesConfig {
+    $path = Get-MinimalNotesConfigPath
+    if (-not (Test-Path -LiteralPath $path)) {
+        return @{}
+    }
+
+    $raw = Get-Content -LiteralPath $path -Raw
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        return @{}
+    }
+
+    $config = $raw | ConvertFrom-Json -AsHashtable
+    if ($config) {
+        return $config
+    }
+
+    return @{}
+}
+
+function Get-ConfigValue {
+    param(
+        [hashtable]$Config,
+        [string]$Key,
+        $DefaultValue = $null
+    )
+
+    if ($Config -and $Config.ContainsKey($Key)) {
+        return $Config[$Key]
+    }
+
+    return $DefaultValue
+}
+
+function Get-DefaultConfigValue {
+    param(
+        [hashtable]$Config,
+        [string]$Key,
+        $DefaultValue = $null
+    )
+
+    if ($Config -and $Config.ContainsKey("defaults")) {
+        $defaults = $Config["defaults"]
+        if ($defaults -is [hashtable] -and $defaults.ContainsKey($Key)) {
+            return $defaults[$Key]
+        }
+    }
+
+    return $DefaultValue
 }
 
 Initialize-MinimalNotesContext
@@ -1365,6 +1442,9 @@ Usage:
   ./note.ps1 recent 5
   ./note.ps1 stale
   ./note.ps1 stale 60
+  ./note.ps1 config
+  ./note.ps1 config init
+  ./note.ps1 config path
   ./note.ps1 dashboard
   ./note.ps1 dashboard 7
   ./note.ps1 agenda
@@ -1423,6 +1503,7 @@ Commands:
   orphans    List notes with no inbound wiki links.
   recent     List recently modified notes, newest first.
   stale      List notes untouched for at least N days.
+  config     Show, initialize, or locate the JSON config file.
   dashboard  Show a compact multi-section vault overview.
   agenda     Show notes with due or scheduled frontmatter dates.
   report     Summarize recent note and task activity for a time window.
@@ -1451,6 +1532,7 @@ Commands:
   help       Show this help.
 
 Environment:
+  MINIMAL_NOTES_CONFIG  Override the config file location.
   MINIMAL_NOTES_VAULT   Override the vault location.
   MINIMAL_NOTES_TEMPLATES Override the templates location.
   MINIMAL_NOTES_EDITOR  Override the editor command.
@@ -2043,7 +2125,7 @@ function Get-ResolvedLinkPathsForNote {
 function Show-Dashboard {
     param([string]$LimitText)
 
-    $limit = 5
+    $limit = $Script:DefaultDashboardLimit
     if ($LimitText) {
         if (-not [int]::TryParse($LimitText.Trim(), [ref]$limit)) {
             throw "Dashboard limit must be a whole number."
@@ -2532,7 +2614,7 @@ function Show-RelatedNotes {
 function Show-StaleNotes {
     param([string]$DaysText)
 
-    $days = 30
+    $days = $Script:DefaultStaleDays
     if ($DaysText) {
         if (-not [int]::TryParse($DaysText.Trim(), [ref]$days)) {
             throw "Stale threshold must be a whole number of days."
@@ -2542,6 +2624,38 @@ function Show-StaleNotes {
     foreach ($note in (Get-StaleNotes -Days $days)) {
         "{0}d  {1}  {2}" -f [int](((Get-Date) - $note.LastWrite).TotalDays), $note.Title, $note.RelativePath
     }
+}
+
+function Show-Config {
+    Write-Output ("configPath: {0}" -f $Script:ConfigPath)
+    Write-Output ("vault: {0}" -f $Script:VaultRoot)
+    Write-Output ("templates: {0}" -f $Script:TemplateRoot)
+    Write-Output ("queries: {0}" -f $Script:QueriesPath)
+    Write-Output ("editor: {0}" -f $Script:DefaultEditor)
+    Write-Output ("noOpen: {0}" -f $Script:NoOpen.ToString().ToLowerInvariant())
+    Write-Output ("defaultStaleDays: {0}" -f $Script:DefaultStaleDays)
+    Write-Output ("defaultDashboardLimit: {0}" -f $Script:DefaultDashboardLimit)
+}
+
+function Initialize-ConfigFile {
+    $path = Get-MinimalNotesConfigPath
+    if (-not (Test-Path -LiteralPath $path)) {
+        $config = [ordered]@{
+            vault     = Join-Path $Script:ProjectRoot "vault"
+            templates = Join-Path $Script:ProjectRoot "templates"
+            queries   = Join-Path $Script:ProjectRoot "saved-queries.json"
+            editor    = "notepad.exe"
+            noOpen    = $false
+            defaults  = [ordered]@{
+                staleDays      = 30
+                dashboardLimit = 5
+            }
+        }
+        $json = $config | ConvertTo-Json -Depth 5
+        Set-Content -LiteralPath $path -Value $json -Encoding utf8
+    }
+
+    Write-Output $path
 }
 
 function Show-DedupeCandidates {
@@ -2719,6 +2833,21 @@ function Invoke-MinimalNotesCli {
         "stale" {
             $days = if ($Arguments.Count -gt 0) { $Arguments -join " " } else { $null }
             Show-StaleNotes -DaysText $days
+        }
+        "config" {
+            $configArgs = @($Arguments | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+            if ($configArgs.Count -eq 0) {
+                Show-Config
+                break
+            }
+
+            $action = $configArgs[0].Trim().ToLowerInvariant()
+            switch ($action) {
+                "show" { Show-Config }
+                "init" { Initialize-ConfigFile }
+                "path" { Write-Output (Get-MinimalNotesConfigPath) }
+                default { throw "Unknown config action: $action" }
+            }
         }
         "dashboard" {
             $limit = if ($Arguments.Count -gt 0) { $Arguments -join " " } else { $null }
