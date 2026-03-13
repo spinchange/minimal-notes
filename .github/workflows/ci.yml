@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Pester 5
+        shell: pwsh
+        run: Install-Module Pester -Scope CurrentUser -Force -SkipPublisherCheck
+
+      - name: Run tests
+        shell: pwsh
+        run: ./run-tests.ps1

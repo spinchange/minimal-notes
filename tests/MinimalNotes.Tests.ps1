@@ -1,14 +1,14 @@
-$here = Split-Path -Parent $MyInvocation.MyCommand.Path
-$projectRoot = Split-Path -Parent $here
-$scriptPath = Join-Path $projectRoot "note.ps1"
+$global:MinimalNotes_TestHere = Split-Path -Parent $MyInvocation.MyCommand.Path
+$global:MinimalNotes_ProjectRoot = Split-Path -Parent $global:MinimalNotes_TestHere
+$global:MinimalNotes_ScriptPath = Join-Path $global:MinimalNotes_ProjectRoot "note.ps1"
 
-function New-TestVault {
+function script:New-TestVault {
     $path = Join-Path ([System.IO.Path]::GetTempPath()) ("minimal-notes-tests-" + [guid]::NewGuid().ToString("n"))
     New-Item -ItemType Directory -Path $path | Out-Null
     return $path
 }
 
-function Remove-TestVault {
+function script:Remove-TestVault {
     param([string]$Path)
 
     if ($Path -and (Test-Path -LiteralPath $Path)) {
@@ -16,7 +16,7 @@ function Remove-TestVault {
     }
 }
 
-function Invoke-NoteCli {
+function script:Invoke-NoteCli {
     param(
         [string]$VaultPath,
         [string[]]$Arguments
@@ -25,7 +25,7 @@ function Invoke-NoteCli {
     $env:MINIMAL_NOTES_VAULT = $VaultPath
     $env:MINIMAL_NOTES_NO_OPEN = "1"
 
-    $output = & pwsh -NoProfile -File $scriptPath @Arguments 2>&1
+    $output = & pwsh -NoProfile -File $global:MinimalNotes_ScriptPath @Arguments 2>&1
     $exitCode = $LASTEXITCODE
 
     return [pscustomobject]@{
@@ -35,14 +35,14 @@ function Invoke-NoteCli {
     }
 }
 
-function Invoke-InteractivePick {
+function script:Invoke-InteractivePick {
     param(
         [string]$VaultPath,
         [string]$InputText,
         [string]$Query
     )
 
-    $escapedScriptPath = $scriptPath.Replace('"', '""')
+    $escapedScriptPath = $global:MinimalNotes_ScriptPath.Replace('"', '""')
     $escapedVaultPath = $VaultPath.Replace('"', '""')
     $escapedInput = $InputText.Replace('"', '""')
     $escapedQuery = $Query.Replace('"', '""')
@@ -72,9 +72,9 @@ Describe "Minimal Notes CLI" {
     It "creates a note with new" {
         $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("new", "Project Ideas")
 
-        $result.ExitCode | Should Be 0
-        (Test-Path -LiteralPath (Join-Path $script:VaultPath "project-ideas.md")) | Should Be $true
-        (Get-Content -LiteralPath (Join-Path $script:VaultPath "project-ideas.md") -Raw) | Should Match "# Project Ideas"
+        $result.ExitCode | Should -Be 0
+        (Test-Path -LiteralPath (Join-Path $script:VaultPath "project-ideas.md")) | Should -Be $true
+        (Get-Content -LiteralPath (Join-Path $script:VaultPath "project-ideas.md") -Raw) | Should -Match "# Project Ideas"
     }
 
     It "lists notes with a filter" {
@@ -89,9 +89,9 @@ Describe "Minimal Notes CLI" {
 
         $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("list", "alpha")
 
-        $result.ExitCode | Should Be 0
-        $result.Text | Should Match "Alpha Note"
-        $result.Text | Should Not Match "Beta Note"
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Match "Alpha Note"
+        $result.Text | Should -Not -Match "Beta Note"
     }
 
     It "searches note content" {
@@ -103,8 +103,8 @@ Describe "Minimal Notes CLI" {
 
         $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("search", "automation")
 
-        $result.ExitCode | Should Be 0
-        $result.Text | Should Match "search-target.md:3: PowerShell is great for automation."
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Match "search-target.md:3: PowerShell is great for automation."
     }
 
     It "shows links from a note" {
@@ -116,9 +116,9 @@ Describe "Minimal Notes CLI" {
 
         $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("links", "source")
 
-        $result.ExitCode | Should Be 0
-        $result.Text | Should Match "Target Note"
-        $result.Text | Should Match "another-note"
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Match "Target Note"
+        $result.Text | Should -Match "another-note"
     }
 
     It "finds backlinks including aliased wiki links" {
@@ -133,8 +133,8 @@ Describe "Minimal Notes CLI" {
 
         $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("backlinks", "Target Note")
 
-        $result.ExitCode | Should Be 0
-        $result.Text | Should Match "source.md"
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Match "source.md"
     }
 
     It "fuzzy finds a note by partial query" {
@@ -144,8 +144,8 @@ Describe "Minimal Notes CLI" {
 
         $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("find", "termui")
 
-        $result.ExitCode | Should Be 0
-        $result.Text | Should Match "Terminal UI"
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Match "Terminal UI"
     }
 
     It "lists tags and filters by tag" {
@@ -163,11 +163,11 @@ Describe "Minimal Notes CLI" {
         $allTags = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("tags")
         $filtered = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("tags", "inbox")
 
-        $allTags.ExitCode | Should Be 0
-        $allTags.Text | Should Match "#inbox"
-        $allTags.Text | Should Match "#capture"
-        $filtered.ExitCode | Should Be 0
-        $filtered.Text | Should Match "Inbox  inbox.md"
+        $allTags.ExitCode | Should -Be 0
+        $allTags.Text | Should -Match "#inbox"
+        $allTags.Text | Should -Match "#capture"
+        $filtered.ExitCode | Should -Be 0
+        $filtered.Text | Should -Match "Inbox  inbox.md"
     }
 
     It "prints a preview of a note" {
@@ -179,38 +179,38 @@ Describe "Minimal Notes CLI" {
 
         $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("preview", "welcome")
 
-        $result.ExitCode | Should Be 0
-        $result.Text | Should Match "Hello from preview."
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Match "Hello from preview."
     }
 
     It "creates a daily note without opening an editor" {
         $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("daily", "2026-03-12")
         $dailyPath = Join-Path (Join-Path $script:VaultPath "daily") "2026-03-12.md"
 
-        $result.ExitCode | Should Be 0
-        $result.Text | Should Be $dailyPath
-        (Test-Path -LiteralPath $dailyPath) | Should Be $true
-        (Get-Content -LiteralPath $dailyPath -Raw) | Should Match "## Notes"
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Be $dailyPath
+        (Test-Path -LiteralPath $dailyPath) | Should -Be $true
+        (Get-Content -LiteralPath $dailyPath -Raw) | Should -Match "## Notes"
     }
 
     It "captures a quick note to inbox" {
         $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("capture", "remember the milk")
         $inboxPath = Join-Path $script:VaultPath "inbox.md"
 
-        $result.ExitCode | Should Be 0
-        $result.Text | Should Be $inboxPath
-        (Test-Path -LiteralPath $inboxPath) | Should Be $true
-        (Get-Content -LiteralPath $inboxPath -Raw) | Should Match "remember the milk"
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Be $inboxPath
+        (Test-Path -LiteralPath $inboxPath) | Should -Be $true
+        (Get-Content -LiteralPath $inboxPath -Raw) | Should -Match "remember the milk"
     }
 
     It "captures a quick note to today's daily note" {
         $todayPath = Join-Path (Join-Path $script:VaultPath "daily") ("{0}.md" -f (Get-Date).ToString("yyyy-MM-dd"))
         $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("capture", "daily", "ship the prototype")
 
-        $result.ExitCode | Should Be 0
-        $result.Text | Should Be $todayPath
-        (Test-Path -LiteralPath $todayPath) | Should Be $true
-        (Get-Content -LiteralPath $todayPath -Raw) | Should Match "ship the prototype"
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Be $todayPath
+        (Test-Path -LiteralPath $todayPath) | Should -Be $true
+        (Get-Content -LiteralPath $todayPath -Raw) | Should -Match "ship the prototype"
     }
 
     It "lists orphan notes with no inbound links" {
@@ -228,10 +228,10 @@ Describe "Minimal Notes CLI" {
 
         $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("orphans")
 
-        $result.ExitCode | Should Be 0
-        $result.Text | Should Match "Hub  hub.md"
-        $result.Text | Should Match "Lonely  lonely.md"
-        $result.Text | Should Not Match "Child Note"
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Match "Hub  hub.md"
+        $result.Text | Should -Match "Lonely  lonely.md"
+        $result.Text | Should -Not -Match "Child Note"
     }
 
     It "lists recent notes in newest-first order with a limit" {
@@ -249,11 +249,11 @@ Describe "Minimal Notes CLI" {
 
         $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("recent", "2")
 
-        $result.ExitCode | Should Be 0
+        $result.ExitCode | Should -Be 0
         $lines = @($result.Output | Where-Object { $_ -and $_.ToString().Trim() })
-        $lines.Count | Should Be 2
-        $lines[0].ToString() | Should Match "Third  third.md"
-        $lines[1].ToString() | Should Match "Second  second.md"
+        $lines.Count | Should -Be 2
+        $lines[0].ToString() | Should -Match "Third  third.md"
+        $lines[1].ToString() | Should -Match "Second  second.md"
     }
 
     It "collects open tasks by default" {
@@ -267,10 +267,10 @@ Describe "Minimal Notes CLI" {
 
         $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("tasks")
 
-        $result.ExitCode | Should Be 0
-        $result.Text | Should Match "tasks.md:3  \[open\] First open task"
-        $result.Text | Should Match "tasks.md:5  \[open\] Second open task"
-        $result.Text | Should Not Match "Finished task"
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Match "tasks.md:3  \[open\] First open task"
+        $result.Text | Should -Match "tasks.md:5  \[open\] Second open task"
+        $result.Text | Should -Not -Match "Finished task"
     }
 
     It "can collect done tasks or all tasks" {
@@ -284,13 +284,13 @@ Describe "Minimal Notes CLI" {
         $doneResult = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("tasks", "done")
         $allResult = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("tasks", "all")
 
-        $doneResult.ExitCode | Should Be 0
-        $doneResult.Text | Should Match "tasks.md:4  \[done\] Finished task"
-        $doneResult.Text | Should Not Match "First open task"
+        $doneResult.ExitCode | Should -Be 0
+        $doneResult.Text | Should -Match "tasks.md:4  \[done\] Finished task"
+        $doneResult.Text | Should -Not -Match "First open task"
 
-        $allResult.ExitCode | Should Be 0
-        $allResult.Text | Should Match "First open task"
-        $allResult.Text | Should Match "Finished task"
+        $allResult.ExitCode | Should -Be 0
+        $allResult.Text | Should -Match "First open task"
+        $allResult.Text | Should -Match "Finished task"
     }
 
     It "reads and updates frontmatter properties" {
@@ -303,14 +303,32 @@ Describe "Minimal Notes CLI" {
         $show = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("props", "project")
         $content = Get-Content -LiteralPath (Join-Path $script:VaultPath "project.md") -Raw
 
-        $setStatus.ExitCode | Should Be 0
-        $addTags.ExitCode | Should Be 0
-        $show.ExitCode | Should Be 0
-        $show.Text | Should Match "status: active"
-        $show.Text | Should Match "tags: planning, work|tags: work, planning"
-        $content | Should Match "(?s)^---"
-        $content | Should Match "status: active"
-        $content | Should Match "tags:"
+        $setStatus.ExitCode | Should -Be 0
+        $addTags.ExitCode | Should -Be 0
+        $show.ExitCode | Should -Be 0
+        $show.Text | Should -Match "status: active"
+        $show.Text | Should -Match "tags: planning, work|tags: work, planning"
+        $content | Should -Match "(?s)^---"
+        $content | Should -Match "status: active"
+        $content | Should -Match "tags:"
+    }
+
+    It "reads frontmatter correctly when the file starts with a UTF-8 BOM" {
+        $path = Join-Path $script:VaultPath "bom-note.md"
+        $bom = [char]0xFEFF
+        Set-Content -LiteralPath $path -Value @(
+            ($bom + "---"),
+            "tags:",
+            "  - work",
+            "---",
+            "",
+            "# BOM Note"
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("tags", "work")
+
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Match "BOM Note  bom-note.md"
     }
 
     It "resolves aliases from frontmatter in existing commands" {
@@ -328,10 +346,10 @@ Describe "Minimal Notes CLI" {
         $preview = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("preview", "Idea Bank")
         $tags = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("tags", "work")
 
-        $preview.ExitCode | Should Be 0
-        $preview.Text | Should Match "# Project"
-        $tags.ExitCode | Should Be 0
-        $tags.Text | Should Match "Project  project.md"
+        $preview.ExitCode | Should -Be 0
+        $preview.Text | Should -Match "# Project"
+        $tags.ExitCode | Should -Be 0
+        $tags.Text | Should -Match "Project  project.md"
     }
 
     It "renames a note and updates wiki links while preserving aliases" {
@@ -352,20 +370,47 @@ Describe "Minimal Notes CLI" {
         $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("rename", "Old Note", "New Note")
         $newPath = Join-Path $script:VaultPath "new-note.md"
 
-        $result.ExitCode | Should Be 0
-        $result.Text | Should Be $newPath
-        (Test-Path -LiteralPath $newPath) | Should Be $true
-        (Test-Path -LiteralPath $oldPath) | Should Be $false
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Be $newPath
+        (Test-Path -LiteralPath $newPath) | Should -Be $true
+        (Test-Path -LiteralPath $oldPath) | Should -Be $false
 
         $renamedNote = Get-Content -LiteralPath $newPath -Raw
         $sourceNote = Get-Content -LiteralPath $sourcePath -Raw
 
-        $renamedNote | Should Match "# New Note"
-        $renamedNote | Should Match "\[\[New Note\]\]"
-        $sourceNote | Should Match "\[\[New Note\]\]"
-        $sourceNote | Should Match "\[\[New Note\|Custom Label\]\]"
-        $sourceNote | Should Not Match "\[\[Old Note\]\]"
-        $sourceNote | Should Not Match "\[\[old-note\|Custom Label\]\]"
+        $renamedNote | Should -Match "# New Note"
+        $renamedNote | Should -Match "\[\[New Note\]\]"
+        $sourceNote | Should -Match "\[\[New Note\]\]"
+        $sourceNote | Should -Match "\[\[New Note\|Custom Label\]\]"
+        $sourceNote | Should -Not -Match "\[\[Old Note\]\]"
+        $sourceNote | Should -Not -Match "\[\[old-note\|Custom Label\]\]"
+    }
+
+    It "renames a note and updates headings with irregular heading whitespace" {
+        $oldPath = Join-Path $script:VaultPath "old-note.md"
+        Set-Content -LiteralPath $oldPath -Value @(
+            "#  Old Note   ",
+            "",
+            "Body"
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("rename", "Old Note", "New Note")
+        $newPath = Join-Path $script:VaultPath "new-note.md"
+        $content = Get-Content -LiteralPath $newPath -Raw
+
+        $result.ExitCode | Should -Be 0
+        $content | Should -Match "^# New Note"
+    }
+
+    It "reports an ambiguous fuzzy note match instead of creating a new note silently" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "terminal-ui.md") -Value @("# Terminal UI")
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "terminal-usage.md") -Value @("# Terminal Usage")
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("open", "termu")
+
+        $result.ExitCode | Should -Not -Be 0
+        $result.Text | Should -Match "Ambiguous note name"
+        (Test-Path -LiteralPath (Join-Path $script:VaultPath "termu.md")) | Should -Be $false
     }
 
     It "lists unresolved wiki links across the vault" {
@@ -380,9 +425,9 @@ Describe "Minimal Notes CLI" {
 
         $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("unresolved")
 
-        $result.ExitCode | Should Be 0
-        $result.Text | Should Match "source.md -> \[\[Missing Note\]\] -> missing-note.md"
-        $result.Text | Should Not Match "Existing Note"
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Match "source.md -> \[\[Missing Note\]\] -> missing-note.md"
+        $result.Text | Should -Not -Match "Existing Note"
     }
 
     It "lists unresolved wiki links for a single note" {
@@ -399,9 +444,9 @@ Describe "Minimal Notes CLI" {
 
         $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("unresolved", "source")
 
-        $result.ExitCode | Should Be 0
-        $result.Text | Should Match "source.md -> \[\[Missing Note\]\] -> missing-note.md"
-        $result.Text | Should Not Match "Another Missing"
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Match "source.md -> \[\[Missing Note\]\] -> missing-note.md"
+        $result.Text | Should -Not -Match "Another Missing"
     }
 
     It "creates notes for all unresolved links" {
@@ -413,11 +458,11 @@ Describe "Minimal Notes CLI" {
 
         $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("create-unresolved", "all")
 
-        $result.ExitCode | Should Be 0
-        (Test-Path -LiteralPath (Join-Path $script:VaultPath "missing-note.md")) | Should Be $true
-        (Test-Path -LiteralPath (Join-Path $script:VaultPath "another-missing.md")) | Should Be $true
-        $result.Text | Should Match "missing-note.md"
-        $result.Text | Should Match "another-missing.md"
+        $result.ExitCode | Should -Be 0
+        (Test-Path -LiteralPath (Join-Path $script:VaultPath "missing-note.md")) | Should -Be $true
+        (Test-Path -LiteralPath (Join-Path $script:VaultPath "another-missing.md")) | Should -Be $true
+        $result.Text | Should -Match "missing-note.md"
+        $result.Text | Should -Match "another-missing.md"
     }
 
     It "creates one selected unresolved link target" {
@@ -429,10 +474,10 @@ Describe "Minimal Notes CLI" {
 
         $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("create-unresolved", "Missing Note")
 
-        $result.ExitCode | Should Be 0
-        (Test-Path -LiteralPath (Join-Path $script:VaultPath "missing-note.md")) | Should Be $true
-        (Test-Path -LiteralPath (Join-Path $script:VaultPath "another-missing.md")) | Should Be $false
-        $result.Text | Should Match "missing-note.md"
+        $result.ExitCode | Should -Be 0
+        (Test-Path -LiteralPath (Join-Path $script:VaultPath "missing-note.md")) | Should -Be $true
+        (Test-Path -LiteralPath (Join-Path $script:VaultPath "another-missing.md")) | Should -Be $false
+        $result.Text | Should -Match "missing-note.md"
     }
 
     It "pick opens the selected fuzzy match in no-open mode" {
@@ -442,19 +487,19 @@ Describe "Minimal Notes CLI" {
 
         $result = Invoke-InteractivePick -VaultPath $script:VaultPath -InputText "1" -Query "welcome"
 
-        $result.ExitCode | Should Be 0
-        $result.Text | Should Match "Matches for 'welcome':"
-        $result.Text | Should Match "1\. Welcome  welcome\.md"
-        $result.Text | Should Match ([regex]::Escape((Join-Path $script:VaultPath "welcome.md")))
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Match "Matches for 'welcome':"
+        $result.Text | Should -Match "1\. Welcome  welcome\.md"
+        $result.Text | Should -Match ([regex]::Escape((Join-Path $script:VaultPath "welcome.md")))
     }
 
     It "pick can create a new note when there are no matches" {
         $result = Invoke-InteractivePick -VaultPath $script:VaultPath -InputText "y" -Query "scratch-pad"
         $createdPath = Join-Path $script:VaultPath "scratch-pad.md"
 
-        $result.ExitCode | Should Be 0
-        $result.Text | Should Match ([regex]::Escape($createdPath))
-        (Test-Path -LiteralPath $createdPath) | Should Be $true
-        (Get-Content -LiteralPath $createdPath -Raw) | Should Match "# scratch-pad"
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Match ([regex]::Escape($createdPath))
+        (Test-Path -LiteralPath $createdPath) | Should -Be $true
+        (Get-Content -LiteralPath $createdPath -Raw) | Should -Match "# scratch-pad"
     }
 }

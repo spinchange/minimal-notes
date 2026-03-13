@@ -64,7 +64,7 @@ minimal-notes/
 new        Create a note from a title or path-like name.
 open       Open an existing note, or create it if missing.
 list       List notes in the vault, optionally filtered.
-search     Full-text search across all markdown notes.
+search     Literal full-text search across all markdown notes.
 find       Fuzzy-find notes by title, slug, or path.
 pick       Interactively choose a note to open.
 capture    Append a quick note to inbox.md or today's daily note.
@@ -218,6 +218,12 @@ Run the local test suite:
 
 ```powershell
 pwsh -NoProfile -File .\run-tests.ps1
+```
+
+`run-tests.ps1` expects Pester 5 or later. If needed:
+
+```powershell
+Install-Module Pester -Scope CurrentUser -Force -SkipPublisherCheck
 ```
 
 Current local status:

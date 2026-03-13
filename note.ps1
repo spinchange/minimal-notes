@@ -113,7 +113,8 @@ function Get-Frontmatter {
     $lines = @(Get-Content -LiteralPath $Path)
     $properties = [ordered]@{}
 
-    if ($lines.Count -eq 0 -or $lines[0].Trim() -ne "---") {
+    $firstLine = if ($lines.Count -gt 0) { $lines[0].TrimStart([char]0xFEFF).Trim() } else { "" }
+    if ($lines.Count -eq 0 -or $firstLine -ne "---") {
         return [pscustomobject]@{
             HasFrontmatter = $false
             Properties     = $properties
@@ -270,7 +271,7 @@ function Find-Notes {
     )
 
     $notes = @(Get-AllNotes)
-    $matches = foreach ($note in $notes) {
+    $noteMatches = foreach ($note in $notes) {
         $titleScore = Get-FuzzyScore -Query $Query -Candidate $note.Title
         $slugScore = Get-FuzzyScore -Query $Query -Candidate $note.Slug
         $pathScore = Get-FuzzyScore -Query $Query -Candidate $note.RelativePath
@@ -284,7 +285,7 @@ function Find-Notes {
         }
     }
 
-    $matches |
+    $noteMatches |
         Sort-Object @{ Expression = "Score"; Descending = $true }, @{ Expression = { $_.Note.LastWrite }; Descending = $true } |
         Select-Object -First $Limit
 }
@@ -330,6 +331,10 @@ function Resolve-Note {
     $fuzzy = @(Find-Notes -Query $trimmed -Limit 2)
     if ($fuzzy.Count -eq 1) {
         return $fuzzy[0].Note.Path
+    }
+    if ($fuzzy.Count -gt 1) {
+        $candidates = $fuzzy | ForEach-Object { $_.Note.Title } | Sort-Object -Unique
+        throw ("Ambiguous note name '{0}'. Matches: {1}" -f $trimmed, ($candidates -join ", "))
     }
 
     return $null
@@ -426,9 +431,9 @@ function Get-LinkTargets {
     param([Parameter(Mandatory)][string]$Path)
 
     $content = Get-Content -LiteralPath $Path -Raw
-    $matches = [regex]::Matches($content, '\[\[([^\]]+)\]\]')
+    $linkMatches = [regex]::Matches($content, '\[\[([^\]]+)\]\]')
 
-    foreach ($match in $matches) {
+    foreach ($match in $linkMatches) {
         $raw = $match.Groups[1].Value.Trim()
         if (-not $raw) {
             continue
@@ -525,9 +530,9 @@ function Get-NoteTags {
     }
 
     $content = Get-Content -LiteralPath $Path -Raw
-    $matches = [regex]::Matches($content, '(?<!\w)#([a-zA-Z][\w\-/]*)')
+    $tagMatches = [regex]::Matches($content, '(?<!\w)#([a-zA-Z][\w\-/]*)')
 
-    foreach ($match in $matches) {
+    foreach ($match in $tagMatches) {
         $tag = $match.Groups[1].Value.Trim().ToLowerInvariant()
         if ($tag) {
             $tag
@@ -761,7 +766,7 @@ Commands:
   new        Create a note from a title or path-like name.
   open       Open an existing note in your editor.
   list       List notes in the vault, optionally filtered.
-  search     Full-text search across all markdown notes.
+  search     Literal full-text search across all markdown notes.
   find       Fuzzy-find notes by title, slug, or path.
   pick       Interactively choose a note to open.
   capture    Append a quick note to inbox.md or today's daily note.
@@ -861,9 +866,9 @@ function Invoke-NotePicker {
         }
     }
 
-    $matches = @(Find-Notes -Query $query)
+    $pickerMatches = @(Find-Notes -Query $query)
 
-    if ($matches.Count -eq 0) {
+    if ($pickerMatches.Count -eq 0) {
         $create = Read-ShortInput -Prompt "No matches for '$query'. Create it? [y/N]"
         if ($create -match '^(y|yes)$') {
             $path = New-NoteFile -Name $query
@@ -877,8 +882,8 @@ function Invoke-NotePicker {
 
     Write-Output ""
     Write-Output ("Matches for '{0}':" -f $query)
-    for ($i = 0; $i -lt $matches.Count; $i++) {
-        $match = $matches[$i]
+    for ($i = 0; $i -lt $pickerMatches.Count; $i++) {
+        $match = $pickerMatches[$i]
         "{0}. {1}  {2}" -f ($i + 1), $match.Note.Title, $match.Note.RelativePath
     }
     Write-Output "0. Cancel"
@@ -895,11 +900,11 @@ function Invoke-NotePicker {
         throw "Please enter a number from the list."
     }
 
-    if ($index -lt 1 -or $index -gt $matches.Count) {
+    if ($index -lt 1 -or $index -gt $pickerMatches.Count) {
         throw "Selection out of range."
     }
 
-    Open-InEditor -Path $matches[$index - 1].Note.Path
+    Open-InEditor -Path $pickerMatches[$index - 1].Note.Path
 }
 
 function Show-Links {
@@ -1061,16 +1066,23 @@ function Rename-Note {
     }
 
     $renamedContent = Get-Content -LiteralPath $newPath -Raw
+    $updatedRenamedContent = $renamedContent
     $renamedLines = @($renamedContent -split "\r?\n")
+    $headingUpdated = $false
     for ($i = 0; $i -lt $renamedLines.Count; $i++) {
-        if ($renamedLines[$i] -eq "# $oldTitle") {
+        if ($renamedLines[$i] -match '^#\s+' -and (($renamedLines[$i] -replace '^#\s+', '').Trim() -eq $oldTitle)) {
             $renamedLines[$i] = "# $newLeafName"
+            $headingUpdated = $true
             break
         }
     }
-    $renamedContent = ($renamedLines -join [Environment]::NewLine)
-    $renamedContent = Update-LinksInContent -Content $renamedContent -OldKeys $oldKeys -NewTarget $newLinkTarget
-    Set-Content -LiteralPath $newPath -Value $renamedContent -Encoding utf8
+    if ($headingUpdated) {
+        $updatedRenamedContent = ($renamedLines -join [Environment]::NewLine)
+    }
+    $updatedRenamedContent = Update-LinksInContent -Content $updatedRenamedContent -OldKeys $oldKeys -NewTarget $newLinkTarget
+    if ($updatedRenamedContent -cne $renamedContent) {
+        Set-Content -LiteralPath $newPath -Value $updatedRenamedContent -Encoding utf8
+    }
 
     Get-ChildItem -LiteralPath $Script:VaultRoot -Recurse -File -Filter "*.md" |
         Where-Object { $_.FullName -ne $newPath } |
@@ -1142,15 +1154,16 @@ function Get-DailyNotePath {
     param([datetime]$Date = (Get-Date))
 
     $dailyDir = Join-Path $Script:VaultRoot "daily"
-    if (-not (Test-Path -LiteralPath $dailyDir)) {
-        New-Item -ItemType Directory -Path $dailyDir -Force | Out-Null
-    }
-
     return Join-Path $dailyDir ("{0}.md" -f $Date.ToString("yyyy-MM-dd"))
 }
 
 function Ensure-DailyNoteExists {
     param([datetime]$Date = (Get-Date))
+
+    $dailyDir = Join-Path $Script:VaultRoot "daily"
+    if (-not (Test-Path -LiteralPath $dailyDir)) {
+        New-Item -ItemType Directory -Path $dailyDir -Force | Out-Null
+    }
 
     $path = Get-DailyNotePath -Date $Date
     if (-not (Test-Path -LiteralPath $path)) {
