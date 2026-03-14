@@ -144,6 +144,33 @@ Describe "Minimal Notes CLI" {
         (Get-Content -LiteralPath (Join-Path $script:VaultPath "project-ideas.md") -Raw) | Should -Match "# Project Ideas"
     }
 
+    It "creates a note with metadata flags on new" {
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @(
+            "new", "Meeting Notes",
+            "--status", "active",
+            "--priority", "high",
+            "--due", "2026-03-20",
+            "--scheduled", "2026-03-18",
+            "--tags", "work,meeting",
+            "--aliases", "Weekly Sync,Staff Meeting",
+            "--project", "Q2 Planning"
+        )
+        $path = Join-Path $script:VaultPath "meeting-notes.md"
+        $content = Get-Content -LiteralPath $path -Raw
+
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Be $path
+        $content | Should -Match "status: active"
+        $content | Should -Match "priority: high"
+        $content | Should -Match "due: 2026-03-20"
+        $content | Should -Match "scheduled: 2026-03-18"
+        $content | Should -Match "project: ""Q2 Planning""|project: Q2 Planning"
+        $content | Should -Match "work"
+        $content | Should -Match "meeting"
+        $content | Should -Match "Weekly Sync"
+        $content | Should -Match "Staff Meeting"
+    }
+
     It "sanitizes invalid characters in note path segments during creation" {
         $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("new", "work/<script>/Project Ideas")
         $expectedPath = Join-Path (Join-Path $script:VaultPath "work\script") "project-ideas.md"
@@ -191,6 +218,46 @@ Describe "Minimal Notes CLI" {
         (Get-Content -LiteralPath $notePath -Raw) | Should -Match "# Sprint Review"
         (Get-Content -LiteralPath $notePath -Raw) | Should -Match "Slug: sprint-review"
         (Get-Content -LiteralPath $notePath -Raw) | Should -Match "status: active"
+    }
+
+    It "creates and opens a missing note with template and metadata flags on open" {
+        $templatesPath = Join-Path $script:VaultPath "templates"
+        New-Item -ItemType Directory -Path $templatesPath | Out-Null
+        Set-Content -LiteralPath (Join-Path $templatesPath "meeting.md") -Value @(
+            "# {{title}}",
+            "",
+            "Template body"
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -TemplatesPath $templatesPath -Arguments @(
+            "open", "Weekly Sync",
+            "--template", "meeting",
+            "--status", "active",
+            "--tags", "work,meeting"
+        )
+        $path = Join-Path $script:VaultPath "weekly-sync.md"
+        $content = Get-Content -LiteralPath $path -Raw
+
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Be $path
+        $content | Should -Match "# Weekly Sync"
+        $content | Should -Match "Template body"
+        $content | Should -Match "status: active"
+        $content | Should -Match "work"
+        $content | Should -Match "meeting"
+    }
+
+    It "rejects metadata flags on open when the note already exists" {
+        $path = Join-Path $script:VaultPath "meeting-notes.md"
+        Set-Content -LiteralPath $path -Value "# Meeting Notes"
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @(
+            "open", "Meeting Notes",
+            "--status", "active"
+        )
+
+        $result.ExitCode | Should -Be 1
+        $result.Text | Should -Match "Open only accepts template/property flags when creating a missing note"
     }
 
     It "lists and previews templates" {

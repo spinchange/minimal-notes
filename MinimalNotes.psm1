@@ -695,6 +695,7 @@ function New-NoteFile {
     param(
         [Parameter(Mandatory)][string]$Name,
         [string]$TemplateName,
+        [hashtable]$InitialProperties,
         [switch]$Open
     )
 
@@ -729,6 +730,7 @@ function New-NoteFile {
             )
             Set-Content -LiteralPath $path -Value $content -Encoding utf8
         }
+        Merge-NotePropertiesIntoPath -Path $path -Properties $InitialProperties
         Reset-MinimalNotesCaches
     }
 
@@ -1145,6 +1147,52 @@ function Get-ValidatedPropertyValues {
         Key    = $normalizedKey
         Values = @($items)
     }
+}
+
+function Get-AllowedNoteCreationPropertyKeys {
+    return @("status", "priority", "due", "scheduled", "tags", "aliases", "project")
+}
+
+function Convert-CreationPropertyArguments {
+    param([hashtable]$PropertyArguments)
+
+    $properties = [ordered]@{}
+    foreach ($key in @(Get-AllowedNoteCreationPropertyKeys)) {
+        if (-not $PropertyArguments.ContainsKey($key)) {
+            continue
+        }
+
+        $validated = Get-ValidatedPropertyValues -Key $key -Values @($PropertyArguments[$key])
+        if ($validated.Key -in @("tags", "aliases")) {
+            $properties[$validated.Key] = @($validated.Values)
+        } else {
+            $properties[$validated.Key] = @($validated.Values)[0]
+        }
+    }
+
+    return $properties
+}
+
+function Merge-NotePropertiesIntoPath {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [hashtable]$Properties
+    )
+
+    if (-not $Properties -or $Properties.Count -eq 0) {
+        return
+    }
+
+    $frontmatter = Get-Frontmatter -Path $Path
+    $merged = [ordered]@{}
+    foreach ($entry in $frontmatter.Properties.GetEnumerator()) {
+        $merged[$entry.Key] = $entry.Value
+    }
+    foreach ($entry in $Properties.GetEnumerator()) {
+        $merged[$entry.Key] = $entry.Value
+    }
+
+    Set-Frontmatter -Path $Path -Properties $merged
 }
 
 function Show-Properties {
@@ -1672,31 +1720,93 @@ function Show-TemplatePreview {
     Get-Content -LiteralPath $path
 }
 
-function Parse-NewCommandArguments {
-    param([string[]]$Values)
+function Parse-NoteCreationCommandArguments {
+    param(
+        [string[]]$Values,
+        [Parameter(Mandatory)][string]$CommandName
+    )
 
-    if ($Values.Count -eq 0) {
-        throw "Usage: ./note.ps1 new `"My Note`" [--template template-name]"
+    $usage = if ($CommandName -eq "open") {
+        "Usage: ./note.ps1 open `"My Note`" [--template template-name] [--status active] [--priority high] [--due YYYY-MM-DD] [--scheduled YYYY-MM-DD] [--tags work,meeting] [--aliases alias-one,alias-two] [--project `"Project`"]"
+    } else {
+        "Usage: ./note.ps1 new `"My Note`" [--template template-name] [--status active] [--priority high] [--due YYYY-MM-DD] [--scheduled YYYY-MM-DD] [--tags work,meeting] [--aliases alias-one,alias-two] [--project `"Project`"]"
     }
 
-    $templateIndex = [Array]::IndexOf($Values, "--template")
-    if ($templateIndex -lt 0) {
-        return [pscustomobject]@{
-            Name         = Require-Argument -Values $Values -Message "Usage: ./note.ps1 new `"My Note`" [--template template-name]"
-            TemplateName = $null
+    if ($Values.Count -eq 0) {
+        throw $usage
+    }
+
+    $allowedFlags = @(
+        "--template",
+        "--status",
+        "--priority",
+        "--due",
+        "--scheduled",
+        "--tags",
+        "--aliases",
+        "--project"
+    )
+
+    $nameParts = New-Object System.Collections.Generic.List[string]
+    $options = @{
+        PropertyArguments = @{}
+    }
+
+    $currentFlag = $null
+    $currentValues = New-Object System.Collections.Generic.List[string]
+
+    function Finalize-CurrentCreationFlag {
+        param(
+            [string]$Flag,
+            [System.Collections.Generic.List[string]]$FlagValues,
+            [hashtable]$State
+        )
+
+        if (-not $Flag) {
+            return
+        }
+
+        $value = Require-Argument -Values @($FlagValues) -Message $usage
+        switch ($Flag) {
+            "--template" {
+                $State["TemplateName"] = $value
+            }
+            "--status" { $State["PropertyArguments"]["status"] = $value }
+            "--priority" { $State["PropertyArguments"]["priority"] = $value }
+            "--due" { $State["PropertyArguments"]["due"] = $value }
+            "--scheduled" { $State["PropertyArguments"]["scheduled"] = $value }
+            "--tags" { $State["PropertyArguments"]["tags"] = $value }
+            "--aliases" { $State["PropertyArguments"]["aliases"] = $value }
+            "--project" { $State["PropertyArguments"]["project"] = $value }
+            default { throw "Unknown option: $Flag" }
         }
     }
 
-    if ($templateIndex -eq 0 -or $templateIndex -eq ($Values.Count - 1)) {
-        throw "Usage: ./note.ps1 new `"My Note`" [--template template-name]"
+    foreach ($value in @($Values)) {
+        if ($allowedFlags -contains $value) {
+            Finalize-CurrentCreationFlag -Flag $currentFlag -FlagValues $currentValues -State $options
+            $currentFlag = $value
+            $currentValues = New-Object System.Collections.Generic.List[string]
+            continue
+        }
+
+        if ($value.StartsWith("--")) {
+            throw "Unknown option: $value"
+        }
+
+        if ($currentFlag) {
+            $currentValues.Add($value)
+        } else {
+            $nameParts.Add($value)
+        }
     }
 
-    $nameParts = @($Values[0..($templateIndex - 1)])
-    $templateParts = @($Values[($templateIndex + 1)..($Values.Count - 1)])
+    Finalize-CurrentCreationFlag -Flag $currentFlag -FlagValues $currentValues -State $options
 
     return [pscustomobject]@{
-        Name         = Require-Argument -Values $nameParts -Message "Usage: ./note.ps1 new `"My Note`" [--template template-name]"
-        TemplateName = Require-Argument -Values $templateParts -Message "Template name is required."
+        Name         = Require-Argument -Values @($nameParts) -Message $usage
+        TemplateName = $options["TemplateName"]
+        Properties   = Convert-CreationPropertyArguments -PropertyArguments $options["PropertyArguments"]
     }
 }
 
@@ -1707,7 +1817,9 @@ Minimal Notes CLI
 Usage:
   ./note.ps1 new "My Note"
   ./note.ps1 new "My Note" --template meeting
+  ./note.ps1 new "My Note" --status active --due 2026-03-20 --tags work,meeting
   ./note.ps1 open "My Note"
+  ./note.ps1 open "My Note" --template meeting --project "Q2 Planning"
   ./note.ps1 list
   ./note.ps1 list idea
   ./note.ps1 search powershell
@@ -2684,11 +2796,17 @@ function New-UnresolvedLinks {
 }
 
 function Open-Note {
-    param([Parameter(Mandatory)][string]$Name)
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [string]$TemplateName,
+        [hashtable]$InitialProperties
+    )
 
     $path = Resolve-Note -Name $Name
     if (-not $path) {
-        $path = New-NoteFile -Name $Name
+        $path = New-NoteFile -Name $Name -TemplateName $TemplateName -InitialProperties $InitialProperties
+    } elseif (($TemplateName) -or ($InitialProperties -and $InitialProperties.Count -gt 0)) {
+        throw "Open only accepts template/property flags when creating a missing note."
     }
 
     Open-InEditor -Path $path
@@ -3130,13 +3248,13 @@ function Invoke-MinimalNotesCli {
 
     switch ($Command.ToLowerInvariant()) {
         "new" {
-            $newArguments = Parse-NewCommandArguments -Values $Arguments
-            $path = New-NoteFile -Name $newArguments.Name -TemplateName $newArguments.TemplateName
+            $newArguments = Parse-NoteCreationCommandArguments -Values $Arguments -CommandName "new"
+            $path = New-NoteFile -Name $newArguments.Name -TemplateName $newArguments.TemplateName -InitialProperties $newArguments.Properties
             Write-Output $path
         }
         "open" {
-            $name = Require-Argument -Values $Arguments -Message "Usage: ./note.ps1 open `"My Note`""
-            Open-Note -Name $name
+            $openArguments = Parse-NoteCreationCommandArguments -Values $Arguments -CommandName "open"
+            Open-Note -Name $openArguments.Name -TemplateName $openArguments.TemplateName -InitialProperties $openArguments.Properties
         }
         "list" {
             $filter = if ($Arguments.Count -gt 0) { $Arguments -join " " } else { $null }

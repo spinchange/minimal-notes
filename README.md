@@ -42,6 +42,7 @@ From the project folder:
 ```powershell
 pwsh -NoProfile -File .\note.ps1 help
 pwsh -NoProfile -File .\note.ps1 new "Project Ideas"
+pwsh -NoProfile -File .\note.ps1 new "Meeting Notes" --status active --due 2026-03-20 --tags work,meeting
 pwsh -NoProfile -File .\note.ps1 capture "remember this"
 pwsh -NoProfile -File .\note.ps1 template new meeting
 pwsh -NoProfile -File .\note.ps1 new "Sprint Review" --template meeting
@@ -177,6 +178,7 @@ Create a note:
 
 ```powershell
 pwsh -NoProfile -File .\note.ps1 new "PowerShell Ideas"
+pwsh -NoProfile -File .\note.ps1 new "Meeting Notes" --status active --due 2026-03-20 --tags work,meeting --project "Q2 Planning"
 ```
 
 Create and use a template:
@@ -204,6 +206,7 @@ pwsh -NoProfile -File .\note.ps1 links "PowerShell Ideas"
 pwsh -NoProfile -File .\note.ps1 backlinks "Terminal UI"
 pwsh -NoProfile -File .\note.ps1 find termui
 pwsh -NoProfile -File .\note.ps1 pick termui
+pwsh -NoProfile -File .\note.ps1 open "Weekly Sync" --template meeting --tags work,meeting
 ```
 
 When fuzzy note or template matches tie on score, Minimal Notes prefers the most recently modified match.
@@ -277,6 +280,12 @@ pwsh -NoProfile -File .\note.ps1 tasks overdue
 ```
 
 Task output includes note context when available, such as `project`, `status`, `priority`, `scheduled`, and `due`.
+
+You can also set those common properties at note creation time with `new` or with `open` when it creates a missing note:
+
+```powershell
+pwsh -NoProfile -File .\note.ps1 new "Meeting Notes" --status active --priority high --due 2026-03-20 --scheduled 2026-03-18 --tags work,meeting --aliases "Weekly Sync,Staff Meeting" --project "Q2 Planning"
+```
 
 Templates are plain markdown files stored in `templates/`. They support a few built-in placeholders:
 
