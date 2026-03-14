@@ -144,6 +144,15 @@ Describe "Minimal Notes CLI" {
         (Get-Content -LiteralPath (Join-Path $script:VaultPath "project-ideas.md") -Raw) | Should -Match "# Project Ideas"
     }
 
+    It "sanitizes invalid characters in note path segments during creation" {
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("new", "work/<script>/Project Ideas")
+        $expectedPath = Join-Path (Join-Path $script:VaultPath "work\script") "project-ideas.md"
+
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Be $expectedPath
+        (Test-Path -LiteralPath $expectedPath) | Should -Be $true
+    }
+
     It "wraps the module through the note.ps1 CLI script" {
         $result = Invoke-NoteCliSubprocess -VaultPath $script:VaultPath -Arguments @("path")
 
@@ -230,6 +239,38 @@ Describe "Minimal Notes CLI" {
         $result.ExitCode | Should -Be 0
         $result.Text | Should -Match "Alpha Note"
         $result.Text | Should -Not -Match "Beta Note"
+    }
+
+    It "lists notes even when one note has unreadable metadata" {
+        $healthyPath = Join-Path $script:VaultPath "healthy.md"
+        $brokenPath = Join-Path $script:VaultPath "broken.md"
+
+        Set-Content -LiteralPath $healthyPath -Value @(
+            "# Healthy"
+        )
+        Set-Content -LiteralPath $brokenPath -Value @(
+            "# Broken"
+        )
+
+        Mock -ModuleName MinimalNotes Get-Frontmatter {
+            param([string]$Path)
+
+            if ($Path -eq $brokenPath) {
+                throw "simulated frontmatter failure"
+            }
+
+            [pscustomobject]@{
+                HasFrontmatter = $false
+                Properties     = [ordered]@{}
+                BodyLines      = @("# Healthy")
+            }
+        }
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("list")
+
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Match "Healthy  healthy.md"
+        $result.Text | Should -Match "broken  broken.md"
     }
 
     It "searches note content" {
@@ -448,6 +489,81 @@ Describe "Minimal Notes CLI" {
         $result.Text | Should -Not -Match "Fresh"
     }
 
+    It "returns -1 from fuzzy scoring when query or candidate is empty" {
+        Import-Module $global:MinimalNotes_ModuleManifestPath -Force -ErrorAction Stop
+
+        $nullQuery = & (Get-Module MinimalNotes) { Get-FuzzyScore -Query $null -Candidate "alpha" }
+        $nullCandidate = & (Get-Module MinimalNotes) { Get-FuzzyScore -Query "alp" -Candidate $null }
+        $emptyCandidate = & (Get-Module MinimalNotes) { Get-FuzzyScore -Query "alp" -Candidate "" }
+
+        $nullQuery | Should -Be (-1)
+        $nullCandidate | Should -Be (-1)
+        $emptyCandidate | Should -Be (-1)
+    }
+
+    It "parses frontmatter lists, quoted scalars, and body lines" {
+        $path = Join-Path $script:VaultPath "frontmatter.md"
+        Set-Content -LiteralPath $path -Value @(
+            "---",
+            "title: ""Quoted Value""",
+            "tags:",
+            "  - work",
+            "  - ""deep focus""",
+            "---",
+            "",
+            "# Body",
+            "Text"
+        )
+
+        $result = & (Get-Module MinimalNotes) { Get-Frontmatter -Path $args[0] } $path
+
+        $result.HasFrontmatter | Should -Be $true
+        $result.Properties["title"] | Should -Be "Quoted Value"
+        @($result.Properties["tags"]).Count | Should -Be 2
+        $result.Properties["tags"][1] | Should -Be "deep focus"
+        @($result.BodyLines)[1] | Should -Be "# Body"
+    }
+
+    It "rewrites wiki links while preserving display aliases" {
+        $updated = & (Get-Module MinimalNotes) { Update-LinksInContent -Content "See [[Old Note]] and [[old-note|Label]]." -OldKeys @("Old Note", "old-note") -NewTarget "New Note" }
+
+        $updated | Should -Be "See [[New Note]] and [[New Note|Label]]."
+    }
+
+    It "matches heading sections and computes section ranges" {
+        $heading = & (Get-Module MinimalNotes) { Get-HeadingMatch -Line "## Decisions   " -Heading "Decisions" }
+        $range = & (Get-Module MinimalNotes) {
+            Get-SectionRange -Lines @(
+                "# Project",
+                "",
+                "## Decisions",
+                "Decision details",
+                "### Nested",
+                "More detail",
+                "## Next Steps",
+                "Do it"
+            ) -Heading "Decisions"
+        }
+
+        $heading.Level | Should -Be 2
+        $heading.Title | Should -Be "Decisions"
+        $range.Start | Should -Be 2
+        $range.End | Should -Be 5
+        $range.Level | Should -Be 2
+    }
+
+    It "rejects child paths that escape the root" {
+        $root = $script:VaultPath
+        $result = try {
+            & (Get-Module MinimalNotes) { Resolve-ChildPathWithinRoot -Root $args[0] -ChildPath "..\\escape" -Label "Note path" } $root
+            "no-error"
+        } catch {
+            $_.Exception.Message
+        }
+
+        $result | Should -Match "must stay within the vault"
+    }
+
     It "saves, shows, runs, and deletes a saved query" {
         $queryPath = Join-Path $global:MinimalNotes_ProjectRoot "saved-queries.json"
         if (Test-Path -LiteralPath $queryPath) {
@@ -639,6 +755,23 @@ Describe "Minimal Notes CLI" {
         $overdueResult.Text | Should -Not -Match "Today Note"
     }
 
+    It "fails agenda with a clear error when a note has an invalid date" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "bad-agenda.md") -Value @(
+            "---",
+            "scheduled: not-a-date",
+            "---",
+            "",
+            "# Bad Agenda"
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("agenda")
+
+        $result.ExitCode | Should -Be 1
+        $result.Text | Should -Match "Invalid scheduled date 'not-a-date'"
+        $result.Text | Should -Match "Bad Agenda"
+        $result.Text | Should -Match "bad-agenda.md"
+    }
+
     It "collects open tasks by default" {
         Set-Content -LiteralPath (Join-Path $script:VaultPath "tasks.md") -Value @(
             "# Tasks",
@@ -767,6 +900,25 @@ Describe "Minimal Notes CLI" {
         $result.Text | Should -Not -Match "Fix today item"
     }
 
+    It "fails tasks with a clear error when a note has an invalid date" {
+        Set-Content -LiteralPath (Join-Path $script:VaultPath "bad-task.md") -Value @(
+            "---",
+            "due: not-a-date",
+            "---",
+            "",
+            "# Bad Task",
+            "",
+            "- [ ] Follow up"
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("tasks")
+
+        $result.ExitCode | Should -Be 1
+        $result.Text | Should -Match "Invalid due date 'not-a-date'"
+        $result.Text | Should -Match "Bad Task"
+        $result.Text | Should -Match "bad-task.md"
+    }
+
     It "creates weekly and monthly notes without opening an editor" {
         $weeklyResult = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("weekly", "2026-03-12")
         $monthlyResult = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("monthly", "2026-03-12")
@@ -848,6 +1000,90 @@ Describe "Minimal Notes CLI" {
         $mergedContent | Should -Match "Body from source."
         $referrerContent | Should -Match "\[\[Target Note\]\]"
         $referrerContent | Should -Not -Match "\[\[Source Note\]\]"
+    }
+
+    It "merges a note and rewrites links regardless of link casing" {
+        $sourcePath = Join-Path $script:VaultPath "source-note.md"
+        $targetPath = Join-Path $script:VaultPath "target-note.md"
+        $referrerPath = Join-Path $script:VaultPath "referrer.md"
+
+        Set-Content -LiteralPath $sourcePath -Value @(
+            "# Source Note",
+            "",
+            "Body from source."
+        )
+        Set-Content -LiteralPath $targetPath -Value @(
+            "# Target Note",
+            "",
+            "Existing target body."
+        )
+        Set-Content -LiteralPath $referrerPath -Value @(
+            "# Referrer",
+            "",
+            "See [[SOURCE NOTE]] and [[source-note|Alias Label]]."
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("merge", "Source Note", "Target Note")
+
+        $result.ExitCode | Should -Be 0
+        (Test-Path -LiteralPath $sourcePath) | Should -Be $false
+
+        $referrerContent = Get-Content -LiteralPath $referrerPath -Raw
+
+        $referrerContent | Should -Match "\[\[Target Note\]\]"
+        $referrerContent | Should -Match "\[\[Target Note\|Alias Label\]\]"
+        $referrerContent | Should -Not -Match "\[\[SOURCE NOTE\]\]"
+        $referrerContent | Should -Not -Match "\[\[source-note\|Alias Label\]\]"
+    }
+
+    It "preserves the source note and rolls back writes when merge fails" {
+        $sourcePath = Join-Path $script:VaultPath "source-note.md"
+        $targetPath = Join-Path $script:VaultPath "target-note.md"
+        $referrerPath = Join-Path $script:VaultPath "referrer.md"
+
+        Set-Content -LiteralPath $sourcePath -Value @(
+            "# Source Note",
+            "",
+            "Body from source."
+        )
+        Set-Content -LiteralPath $targetPath -Value @(
+            "# Target Note",
+            "",
+            "Existing target body."
+        )
+        Set-Content -LiteralPath $referrerPath -Value @(
+            "# Referrer",
+            "",
+            "See [[Source Note]]."
+        )
+
+        Mock -ModuleName MinimalNotes Set-Content {
+            param(
+                [string]$LiteralPath,
+                $Value,
+                $Encoding
+            )
+
+            if ($LiteralPath -eq $referrerPath) {
+                throw "simulated write failure"
+            }
+
+            Microsoft.PowerShell.Management\Set-Content -LiteralPath $LiteralPath -Value $Value -Encoding $Encoding
+        }
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("merge", "Source Note", "Target Note")
+
+        $result.ExitCode | Should -Be 1
+        $result.Text | Should -Match "Merge failed before the source note was removed"
+        (Test-Path -LiteralPath $sourcePath) | Should -Be $true
+
+        $targetContent = Get-Content -LiteralPath $targetPath -Raw
+        $referrerContent = Get-Content -LiteralPath $referrerPath -Raw
+
+        $targetContent | Should -Not -Match "## Merged from Source Note"
+        $targetContent | Should -Match "Existing target body."
+        $referrerContent | Should -Match "\[\[Source Note\]\]"
+        $referrerContent | Should -Not -Match "\[\[Target Note\]\]"
     }
 
     It "splits a heading section into a new linked note" {
@@ -1037,6 +1273,39 @@ Describe "Minimal Notes CLI" {
         $sourceNote | Should -Not -Match "\[\[old-note\|Custom Label\]\]"
     }
 
+    It "renames a note and updates wiki links regardless of link casing" {
+        $oldPath = Join-Path $script:VaultPath "old-note.md"
+        $sourcePath = Join-Path $script:VaultPath "source.md"
+
+        Set-Content -LiteralPath $oldPath -Value @(
+            "# Old Note",
+            "",
+            "Self link to [[OLD NOTE]]."
+        )
+        Set-Content -LiteralPath $sourcePath -Value @(
+            "# Source",
+            "",
+            "Plain [[OLD NOTE]] and aliased [[old-note|Custom Label]]."
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("rename", "Old Note", "New Note")
+        $newPath = Join-Path $script:VaultPath "new-note.md"
+
+        $result.ExitCode | Should -Be 0
+        (Test-Path -LiteralPath $newPath) | Should -Be $true
+        (Test-Path -LiteralPath $oldPath) | Should -Be $false
+
+        $renamedNote = Get-Content -LiteralPath $newPath -Raw
+        $sourceNote = Get-Content -LiteralPath $sourcePath -Raw
+
+        $renamedNote | Should -Match "\[\[New Note\]\]"
+        $renamedNote | Should -Not -Match "\[\[OLD NOTE\]\]"
+        $sourceNote | Should -Match "\[\[New Note\]\]"
+        $sourceNote | Should -Match "\[\[New Note\|Custom Label\]\]"
+        $sourceNote | Should -Not -Match "\[\[OLD NOTE\]\]"
+        $sourceNote | Should -Not -Match "\[\[old-note\|Custom Label\]\]"
+    }
+
     It "renames a note and updates headings with irregular heading whitespace" {
         $oldPath = Join-Path $script:VaultPath "old-note.md"
         Set-Content -LiteralPath $oldPath -Value @(
@@ -1051,6 +1320,114 @@ Describe "Minimal Notes CLI" {
 
         $result.ExitCode | Should -Be 0
         $content | Should -Match "^# New Note"
+    }
+
+    It "renames a note without a matching heading and emits a warning" {
+        $oldPath = Join-Path $script:VaultPath "old-note.md"
+        Set-Content -LiteralPath $oldPath -Value @(
+            "This note has no matching heading.",
+            "",
+            "See [[Old Note]]."
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("rename", "Old Note", "New Note")
+        $newPath = Join-Path $script:VaultPath "new-note.md"
+        $content = Get-Content -LiteralPath $newPath -Raw
+
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Match ([regex]::Escape($newPath))
+        $result.Text | Should -Match "Warning: renamed note heading was not updated"
+        (Test-Path -LiteralPath $newPath) | Should -Be $true
+        (Test-Path -LiteralPath $oldPath) | Should -Be $false
+        $content | Should -Match "This note has no matching heading\."
+        $content | Should -Match "\[\[New Note\]\]"
+        $content | Should -Not -Match "\[\[Old Note\]\]"
+    }
+
+    It "moves a note to a new folder without changing its heading when the leaf slug stays the same" {
+        $oldPath = Join-Path $script:VaultPath "projects\\old-note.md"
+        $sourcePath = Join-Path $script:VaultPath "source.md"
+        New-Item -ItemType Directory -Path (Split-Path -Parent $oldPath) -Force | Out-Null
+
+        Set-Content -LiteralPath $oldPath -Value @(
+            "---",
+            "aliases:",
+            "  - Existing Alias",
+            "---",
+            "",
+            "# Old Note",
+            "",
+            "Self link to [[Old Note]] and [[projects/old-note]]."
+        )
+        Set-Content -LiteralPath $sourcePath -Value @(
+            "# Source",
+            "",
+            "Link to [[Old Note]] and [[projects/old-note]]."
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("rename", "projects/old-note", "archive/old-note")
+        $newPath = Join-Path (Join-Path $script:VaultPath "archive") "old-note.md"
+        $renamedContent = Get-Content -LiteralPath $newPath -Raw
+        $sourceNote = Get-Content -LiteralPath $sourcePath -Raw
+
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Be $newPath
+        $renamedContent | Should -Match "# Old Note"
+        $renamedContent | Should -Not -Match "^# old-note"
+        $renamedContent | Should -Match "projects/old-note"
+        $sourceNote | Should -Match "\[\[archive/old-note\]\]"
+        $sourceNote | Should -Not -Match "\[\[projects/old-note\]\]"
+        $sourceNote | Should -Not -Match "\[\[Old Note\]\]"
+    }
+
+    It "renames a note and rewrites incoming links that target an alias" {
+        $oldPath = Join-Path $script:VaultPath "old-note.md"
+        $sourcePath = Join-Path $script:VaultPath "source.md"
+
+        Set-Content -LiteralPath $oldPath -Value @(
+            "---",
+            "aliases:",
+            "  - Idea Bank",
+            "---",
+            "",
+            "# Old Note"
+        )
+        Set-Content -LiteralPath $sourcePath -Value @(
+            "# Source",
+            "",
+            "See [[Idea Bank]]."
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("rename", "Old Note", "New Note")
+        $sourceNote = Get-Content -LiteralPath $sourcePath -Raw
+
+        $result.ExitCode | Should -Be 0
+        $sourceNote | Should -Match "\[\[New Note\]\]"
+        $sourceNote | Should -Not -Match "\[\[Idea Bank\]\]"
+    }
+
+    It "renames a note with case-only title changes without duplicating aliases" {
+        $oldPath = Join-Path $script:VaultPath "old-note.md"
+        Set-Content -LiteralPath $oldPath -Value @(
+            "---",
+            "aliases:",
+            "  - Old Note Archive",
+            "---",
+            "",
+            "# Old Note",
+            "",
+            "See [[Old Note]]."
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("rename", "Old Note", "old note")
+        $content = Get-Content -LiteralPath $oldPath -Raw
+
+        $result.ExitCode | Should -Be 0
+        $content | Should -Match "^---"
+        $content | Should -Match "# old note"
+        $content | Should -Match "\[\[old note\]\]"
+        $content | Should -Match "Old Note Archive"
+        $content | Should -Not -Match "(?m)^\s+- Old Note$"
     }
 
     It "renames a note into a folder and adds old title and path aliases" {
@@ -1101,6 +1478,66 @@ Describe "Minimal Notes CLI" {
         $result.ExitCode | Should -Not -Be 0
         $result.Text | Should -Match "must stay within the vault"
         (Test-Path -LiteralPath $oldPath) | Should -Be $true
+    }
+
+    It "sanitizes invalid characters in destination path segments during rename" {
+        $oldPath = Join-Path $script:VaultPath "old-note.md"
+        Set-Content -LiteralPath $oldPath -Value @(
+            "# Old Note"
+        )
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("rename", "Old Note", "archive/<script>/New Note")
+        $expectedPath = Join-Path (Join-Path $script:VaultPath "archive\script") "new-note.md"
+
+        $result.ExitCode | Should -Be 0
+        $result.Text | Should -Be $expectedPath
+        (Test-Path -LiteralPath $expectedPath) | Should -Be $true
+        (Test-Path -LiteralPath $oldPath) | Should -Be $false
+    }
+
+    It "rolls back a rename when a later file write fails" {
+        $oldPath = Join-Path $script:VaultPath "old-note.md"
+        $sourcePath = Join-Path $script:VaultPath "source.md"
+
+        Set-Content -LiteralPath $oldPath -Value @(
+            "# Old Note",
+            "",
+            "Self link to [[Old Note]]."
+        )
+        Set-Content -LiteralPath $sourcePath -Value @(
+            "# Source",
+            "",
+            "See [[Old Note]]."
+        )
+
+        Mock -ModuleName MinimalNotes Set-Content {
+            param(
+                [string]$LiteralPath,
+                $Value,
+                $Encoding
+            )
+
+            if ($LiteralPath -eq $sourcePath) {
+                throw "simulated write failure"
+            }
+
+            Microsoft.PowerShell.Management\Set-Content -LiteralPath $LiteralPath -Value $Value -Encoding $Encoding
+        }
+
+        $result = Invoke-NoteCli -VaultPath $script:VaultPath -Arguments @("rename", "Old Note", "New Note")
+
+        $result.ExitCode | Should -Be 1
+        $result.Text | Should -Match "Rename failed after preparing file updates"
+        (Test-Path -LiteralPath $oldPath) | Should -Be $true
+        (Test-Path -LiteralPath (Join-Path $script:VaultPath "new-note.md")) | Should -Be $false
+
+        $oldContent = Get-Content -LiteralPath $oldPath -Raw
+        $sourceContent = Get-Content -LiteralPath $sourcePath -Raw
+
+        $oldContent | Should -Match "# Old Note"
+        $oldContent | Should -Match "\[\[Old Note\]\]"
+        $sourceContent | Should -Match "\[\[Old Note\]\]"
+        $sourceContent | Should -Not -Match "\[\[New Note\]\]"
     }
 
     It "reports an ambiguous fuzzy note match instead of creating a new note silently" {

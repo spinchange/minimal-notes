@@ -206,6 +206,8 @@ pwsh -NoProfile -File .\note.ps1 find termui
 pwsh -NoProfile -File .\note.ps1 pick termui
 ```
 
+When fuzzy note or template matches tie on score, Minimal Notes prefers the most recently modified match.
+
 Capture and review:
 
 ```powershell
@@ -346,16 +348,16 @@ Focus: help reorganize a growing vault safely.
 - ~~split sections into new linked notes~~
 - ~~repair broken or ambiguous links with suggestions~~
 - ~~dedupe near-duplicate notes by title or content similarity~~
-- extend `rename` to handle more path-move and alias-update cases
+- ~~extend `rename` to handle more path-move and alias-update cases~~
 
 ### Phase 4: Architecture and polish
 
 Focus: keep the codebase maintainable as features expand.
 
 - ~~split the project into a reusable PowerShell module plus a thin CLI wrapper~~
-- add deeper parsing and unit tests alongside the current smoke tests
+- ~~add deeper parsing and unit tests alongside the current smoke tests~~
 - ~~introduce a config file for vault defaults, editor, templates, and display preferences~~
-- improve performance for larger vaults, potentially with an optional lightweight index
+- ~~improve performance for larger vaults, potentially with an optional lightweight index~~
 
 ### Suggested next build order
 
@@ -383,7 +385,7 @@ Install-Module Pester -Scope CurrentUser -Force -SkipPublisherCheck
 
 Current local status:
 
-- 52 tests passing
+- 72 tests passing
 - 0 failures
 
 ## License

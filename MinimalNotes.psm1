@@ -1,8 +1,28 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+function Get-MinimalNotesProjectRoot {
+    if ($PSScriptRoot) {
+        return $PSScriptRoot
+    }
+
+    if ($PSCommandPath) {
+        return (Split-Path -Parent $PSCommandPath)
+    }
+
+    if ($MyInvocation.MyCommand.Path) {
+        return (Split-Path -Parent $MyInvocation.MyCommand.Path)
+    }
+
+    return (Get-Location).Path
+}
+
+function Reset-MinimalNotesCaches {
+    $Script:NoteIndexCache = $null
+}
+
 function Initialize-MinimalNotesContext {
-    $Script:ProjectRoot = $PSScriptRoot
+    $Script:ProjectRoot = Get-MinimalNotesProjectRoot
     $Script:ConfigPath = Get-MinimalNotesConfigPath
     $Script:Config = Get-MinimalNotesConfig
     $Script:VaultRoot = if ($env:MINIMAL_NOTES_VAULT) {
@@ -38,6 +58,7 @@ function Initialize-MinimalNotesContext {
     }
     $Script:DefaultStaleDays = [int](Get-DefaultConfigValue -Config $Script:Config -Key "staleDays" -DefaultValue 30)
     $Script:DefaultDashboardLimit = [int](Get-DefaultConfigValue -Config $Script:Config -Key "dashboardLimit" -DefaultValue 5)
+    Reset-MinimalNotesCaches
 }
 
 function Get-MinimalNotesVaultPath {
@@ -321,33 +342,79 @@ function Set-Frontmatter {
     }
 
     Set-Content -LiteralPath $Path -Value $output -Encoding utf8
+    Reset-MinimalNotesCaches
 }
 
 function Get-AllNotes {
     Ensure-Vault
 
-    Get-ChildItem -LiteralPath $Script:VaultRoot -Recurse -File -Filter "*.md" |
+    if ($Script:NoteIndexCache -and $Script:NoteIndexCache.Root -eq $Script:VaultRoot) {
+        return @($Script:NoteIndexCache.Notes)
+    }
+
+    $notes = @(Get-ChildItem -LiteralPath $Script:VaultRoot -Recurse -File -Filter "*.md" |
         Sort-Object FullName |
         ForEach-Object {
-            $frontmatter = Get-Frontmatter -Path $_.FullName
-            [pscustomobject]@{
-                Path         = $_.FullName
-                RelativePath = Get-RelativeVaultPath -Path $_.FullName
-                Slug         = [System.IO.Path]::GetFileNameWithoutExtension($_.Name)
-                Title        = Get-NoteTitle -Path $_.FullName
-                LastWrite    = $_.LastWriteTime
-                Properties   = $frontmatter.Properties
-                Aliases      = @($frontmatter.Properties["aliases"])
+            $relativePath = Get-RelativeVaultPath -Path $_.FullName
+            $slug = [System.IO.Path]::GetFileNameWithoutExtension($_.Name)
+            $title = $slug
+            $properties = [ordered]@{}
+            $aliases = @()
+            $metadataError = $null
+
+            try {
+                $frontmatter = Get-Frontmatter -Path $_.FullName
+                $title = Get-NoteTitle -Path $_.FullName
+                $properties = $frontmatter.Properties
+                $aliases = @($frontmatter.Properties["aliases"])
+            } catch {
+                $metadataError = $_.Exception.Message
             }
-        }
+
+            [pscustomobject]@{
+                Path          = $_.FullName
+                RelativePath  = $relativePath
+                Slug          = $slug
+                Title         = $title
+                LastWrite     = $_.LastWriteTime
+                Properties    = $properties
+                Aliases       = $aliases
+                MetadataError = $metadataError
+            }
+        })
+
+    $Script:NoteIndexCache = [pscustomobject]@{
+        Root  = $Script:VaultRoot
+        Notes = @($notes)
+    }
+
+    return @($notes)
 }
 
 function Get-PlannedNotePath {
     param([Parameter(Mandatory)][string]$Name)
 
     $relativeName = $Name.Trim() -replace '/', '\'
-    $leafName = Split-Path -Path $relativeName -Leaf
-    $parentDir = Split-Path -Path $relativeName -Parent
+    $segments = @($relativeName -split '[\\/]+' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($segments.Count -eq 0) {
+        throw "Could not derive a valid note name from '$Name'."
+    }
+
+    $leafName = $segments[-1]
+    $parentSegments = if ($segments.Count -gt 1) { @($segments[0..($segments.Count - 2)]) } else { @() }
+    foreach ($segment in $parentSegments) {
+        if ($segment -in @(".", "..")) {
+            throw "Note path must stay within the vault."
+        }
+    }
+    $normalizedParentSegments = @(
+        $parentSegments | ForEach-Object { ConvertTo-NoteSlug -Name $_ }
+    )
+    $parentDir = if ($normalizedParentSegments.Count -gt 0) {
+        $normalizedParentSegments -join [System.IO.Path]::DirectorySeparatorChar
+    } else {
+        ""
+    }
     $slug = ConvertTo-NoteSlug -Name $leafName
     $targetDir = Resolve-ChildPathWithinRoot -Root $Script:VaultRoot -ChildPath $parentDir -Label "Note path"
 
@@ -475,9 +542,13 @@ function Expand-TemplateContent {
 
 function Get-FuzzyScore {
     param(
-        [Parameter(Mandatory)][string]$Query,
-        [Parameter(Mandatory)][string]$Candidate
+        [AllowNull()][string]$Query,
+        [AllowNull()][string]$Candidate
     )
+
+    if ([string]::IsNullOrWhiteSpace($Query) -or [string]::IsNullOrWhiteSpace($Candidate)) {
+        return -1
+    }
 
     $q = $Query.ToLowerInvariant()
     $c = $Candidate.ToLowerInvariant()
@@ -658,6 +729,7 @@ function New-NoteFile {
             )
             Set-Content -LiteralPath $path -Value $content -Encoding utf8
         }
+        Reset-MinimalNotesCaches
     }
 
     if ($Open) {
@@ -683,23 +755,60 @@ function Open-InEditor {
     & $Script:DefaultEditor $Path
 }
 
+function Get-NoteAnalysis {
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Get-Variable -Name NoteAnalysisCache -Scope Script -ErrorAction SilentlyContinue)) {
+        $Script:NoteAnalysisCache = @{}
+    }
+
+    if ($Script:NoteAnalysisCache.ContainsKey($Path)) {
+        return $Script:NoteAnalysisCache[$Path]
+    }
+
+    $content = Get-Content -LiteralPath $Path -Raw
+    $lines = @($content -split "\r?\n")
+    $linkTargets = @(
+        [regex]::Matches($content, '\[\[([^\]]+)\]\]') |
+            ForEach-Object {
+                $raw = $_.Groups[1].Value.Trim()
+                if ([string]::IsNullOrWhiteSpace($raw)) {
+                    return
+                }
+
+                $parts = $raw.Split('|', 2)
+                $target = $parts[0].Trim()
+                if ($target) {
+                    $target
+                }
+            }
+    )
+    $inlineTags = @(
+        [regex]::Matches($content, '(?<!\w)#([a-zA-Z][\w\-/]*)') |
+            ForEach-Object {
+                $tag = $_.Groups[1].Value.Trim().ToLowerInvariant()
+                if ($tag) {
+                    $tag
+                }
+            }
+    )
+
+    $analysis = [pscustomobject]@{
+        Content     = $content
+        Lines       = $lines
+        LinkTargets = $linkTargets
+        InlineTags  = $inlineTags
+    }
+
+    $Script:NoteAnalysisCache[$Path] = $analysis
+    return $analysis
+}
+
 function Get-LinkTargets {
     param([Parameter(Mandatory)][string]$Path)
 
-    $content = Get-Content -LiteralPath $Path -Raw
-    $linkMatches = [regex]::Matches($content, '\[\[([^\]]+)\]\]')
-
-    foreach ($match in $linkMatches) {
-        $raw = $match.Groups[1].Value.Trim()
-        if (-not $raw) {
-            continue
-        }
-
-        $parts = $raw.Split('|', 2)
-        $target = $parts[0].Trim()
-        if ($target) {
-            $target
-        }
+    foreach ($target in @((Get-NoteAnalysis -Path $Path).LinkTargets)) {
+        $target
     }
 }
 
@@ -777,19 +886,15 @@ function Get-BacklinkMap {
 function Get-NoteTags {
     param([Parameter(Mandatory)][string]$Path)
 
-    $frontmatter = Get-Frontmatter -Path $Path
-    foreach ($value in @($frontmatter.Properties["tags"])) {
+    $note = @(Get-AllNotes | Where-Object { $_.Path -eq $Path } | Select-Object -First 1)[0]
+    foreach ($value in @($note.Properties["tags"])) {
         $tag = [string]$value
         if (-not [string]::IsNullOrWhiteSpace($tag)) {
             $tag.Trim().TrimStart('#').ToLowerInvariant()
         }
     }
 
-    $content = Get-Content -LiteralPath $Path -Raw
-    $tagMatches = [regex]::Matches($content, '(?<!\w)#([a-zA-Z][\w\-/]*)')
-
-    foreach ($match in $tagMatches) {
-        $tag = $match.Groups[1].Value.Trim().ToLowerInvariant()
+    foreach ($tag in @((Get-NoteAnalysis -Path $Path).InlineTags)) {
         if ($tag) {
             $tag
         }
@@ -806,11 +911,12 @@ function Get-Tasks {
         $noteStatus = ([string]$properties["status"]).Trim().ToLowerInvariant()
         $priority = ([string]$properties["priority"]).Trim()
         $project = if ($properties["project"]) { [string]$properties["project"] } else { $note.Title }
-        $dueDate = Try-ParseAgendaDate -Value ([string]$properties["due"])
-        $scheduledDate = Try-ParseAgendaDate -Value ([string]$properties["scheduled"])
+        $dueDate = Resolve-AgendaDateProperty -Note $note -Key "due"
+        $scheduledDate = Resolve-AgendaDateProperty -Note $note -Key "scheduled"
+        $analysis = Get-NoteAnalysis -Path $note.Path
 
         $lineNumber = 0
-        foreach ($line in (Get-Content -LiteralPath $note.Path)) {
+        foreach ($line in $analysis.Lines) {
             $lineNumber++
             $taskMatch = [regex]::Match($line, '^\s*[-*]\s+\[( |x|X)\]\s+(.+)$')
             if (-not $taskMatch.Success) {
@@ -867,6 +973,25 @@ function Try-ParseAgendaDate {
     }
 }
 
+function Resolve-AgendaDateProperty {
+    param(
+        [Parameter(Mandatory)]$Note,
+        [Parameter(Mandatory)][string]$Key
+    )
+
+    $rawValue = [string]$Note.Properties[$Key]
+    if ([string]::IsNullOrWhiteSpace($rawValue)) {
+        return $null
+    }
+
+    $parsed = Try-ParseAgendaDate -Value $rawValue
+    if ($null -eq $parsed) {
+        throw ("Invalid {0} date '{1}' in note '{2}' ({3}). Use a parseable date like YYYY-MM-DD." -f $Key, $rawValue, $Note.Title, $Note.RelativePath)
+    }
+
+    return $parsed
+}
+
 function Get-AgendaItems {
     param([ValidateSet("active", "today", "overdue", "all")][string]$Mode = "active")
 
@@ -875,8 +1000,8 @@ function Get-AgendaItems {
 
     foreach ($note in @(Get-AllNotes)) {
         $properties = $note.Properties
-        $dueDate = Try-ParseAgendaDate -Value ([string]$properties["due"])
-        $scheduledDate = Try-ParseAgendaDate -Value ([string]$properties["scheduled"])
+        $dueDate = Resolve-AgendaDateProperty -Note $note -Key "due"
+        $scheduledDate = Resolve-AgendaDateProperty -Note $note -Key "scheduled"
         $status = ([string]$properties["status"]).Trim().ToLowerInvariant()
         $priority = ([string]$properties["priority"]).Trim()
 
@@ -1175,9 +1300,10 @@ function Update-LinksInContent {
     })
 }
 
-function Update-RenamedNoteAliases {
+function Get-RenamedNoteContentWithUpdatedAliases {
     param(
         [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Content,
         [Parameter(Mandatory)][string]$OldTitle,
         [Parameter(Mandatory)][string]$OldRelativePath,
         [Parameter(Mandatory)][string]$NewTitle,
@@ -1186,7 +1312,7 @@ function Update-RenamedNoteAliases {
 
     $frontmatter = Get-Frontmatter -Path $Path
     if (-not $frontmatter.HasFrontmatter) {
-        return
+        return $Content
     }
 
     $properties = [ordered]@{}
@@ -1244,7 +1370,28 @@ function Update-RenamedNoteAliases {
         $properties.Remove("aliases")
     }
 
-    Set-Frontmatter -Path $Path -Properties $properties
+    $output = New-Object System.Collections.Generic.List[string]
+    if ($properties.Count -gt 0) {
+        $output.Add("---")
+        foreach ($entry in $properties.GetEnumerator()) {
+            if ($entry.Value -is [System.Collections.IEnumerable] -and -not ($entry.Value -is [string])) {
+                $output.Add(("{0}:" -f $entry.Key))
+                foreach ($item in @($entry.Value)) {
+                    $output.Add(("  - {0}" -f (ConvertTo-FrontmatterScalar -Value $item)))
+                }
+            } else {
+                $output.Add(("{0}: {1}" -f $entry.Key, (ConvertTo-FrontmatterScalar -Value $entry.Value)))
+            }
+        }
+        $output.Add("---")
+        $output.Add("")
+    }
+
+    foreach ($line in $frontmatter.BodyLines) {
+        $output.Add([string]$line)
+    }
+
+    return ($output -join [Environment]::NewLine)
 }
 
 function Get-HeadingMatch {
@@ -1327,6 +1474,7 @@ function Merge-Notes {
     $targetContent = Get-Content -LiteralPath $targetPath -Raw
     $sourceKeys = @(Get-LinkMatcherKeys -Path $sourcePath)
     $targetLinkTarget = $targetTitle
+    $pendingWrites = @()
 
     $mergedBlock = @(
         ""
@@ -1336,7 +1484,11 @@ function Merge-Notes {
     ) -join [Environment]::NewLine
 
     $updatedTarget = ($targetContent.TrimEnd() + [Environment]::NewLine + $mergedBlock.TrimEnd() + [Environment]::NewLine)
-    Set-Content -LiteralPath $targetPath -Value $updatedTarget -Encoding utf8
+    $pendingWrites += [pscustomobject]@{
+        Path            = $targetPath
+        OriginalContent = $targetContent
+        UpdatedContent  = $updatedTarget
+    }
 
     Get-ChildItem -LiteralPath $Script:VaultRoot -Recurse -File -Filter "*.md" |
         Where-Object { $_.FullName -ne $sourcePath } |
@@ -1344,11 +1496,38 @@ function Merge-Notes {
             $content = Get-Content -LiteralPath $_.FullName -Raw
             $updated = Update-LinksInContent -Content $content -OldKeys $sourceKeys -NewTarget $targetLinkTarget
             if ($updated -cne $content) {
-                Set-Content -LiteralPath $_.FullName -Value $updated -Encoding utf8
+                $pendingWrites += [pscustomobject]@{
+                    Path            = $_.FullName
+                    OriginalContent = $content
+                    UpdatedContent  = $updated
+                }
             }
         }
 
+    try {
+        foreach ($write in $pendingWrites) {
+            Set-Content -LiteralPath $write.Path -Value $write.UpdatedContent -Encoding utf8
+        }
+    } catch {
+        $rollbackErrors = @()
+        foreach ($write in $pendingWrites) {
+            try {
+                Set-Content -LiteralPath $write.Path -Value $write.OriginalContent -Encoding utf8
+            } catch {
+                $rollbackErrors += $write.Path
+            }
+        }
+
+        $message = "Merge failed before the source note was removed. Any written files were rolled back. $($_.Exception.Message)"
+        if ($rollbackErrors.Count -gt 0) {
+            $message += " Rollback also failed for: $($rollbackErrors -join ', ')"
+        }
+
+        throw $message
+    }
+
     Remove-Item -LiteralPath $sourcePath -Force
+    Reset-MinimalNotesCaches
     Write-Output $targetPath
 }
 
@@ -1402,6 +1581,7 @@ function Split-NoteSection {
     }
 
     Set-Content -LiteralPath $sourcePath -Value $updatedLines -Encoding utf8
+    Reset-MinimalNotesCaches
     Write-Output $newPath
 }
 
@@ -2369,29 +2549,42 @@ function Rename-Note {
     }
 
     $oldTitle = Get-NoteTitle -Path $oldPath
+    $oldPathLeafName = Split-Path -Leaf ($oldRelativePath -replace '/', '\')
+    $oldLeafName = Split-Path -Leaf ($OldName.Trim() -replace '/', '\')
     $newLeafName = Split-Path -Leaf ($NewName.Trim() -replace '/', '\')
+    $oldPathLeafSlug = ConvertTo-NoteSlug -Name $oldPathLeafName
+    $newLeafSlug = ConvertTo-NoteSlug -Name $newLeafName
+    $preserveHeadingTitle = ($newLeafSlug -eq $oldPathLeafSlug) -and ($newLeafName -ceq $newLeafSlug)
+    $newDisplayTitle = if ($preserveHeadingTitle) { $oldTitle } else { $newLeafName }
     $newLinkTarget = Normalize-NoteReference -Reference $newLeafName
     if (-not [string]::IsNullOrWhiteSpace((Split-Path -Parent ($NewName.Trim() -replace '/', '\')))) {
         $newLinkTarget = Normalize-NoteReference -Reference (Get-LinkReferenceForPath -Path $newPath)
     }
 
-    $oldKeys = @(Get-LinkMatcherKeys -Path $oldPath)
+    $oldKeys = @(
+        @(Get-LinkMatcherKeys -Path $oldPath) +
+        @(Normalize-NoteReference -Reference $OldName) +
+        @(Normalize-NoteReference -Reference $oldLeafName)
+    ) | Sort-Object -Unique
     $newDirectory = Split-Path -Parent $newPath
     if (-not (Test-Path -LiteralPath $newDirectory)) {
         New-Item -ItemType Directory -Path $newDirectory -Force | Out-Null
     }
+    $movePerformed = $false
+    $pendingWrites = @()
 
     if ($oldPath -ne $newPath) {
         Move-Item -LiteralPath $oldPath -Destination $newPath
+        $movePerformed = $true
     }
 
     $renamedContent = Get-Content -LiteralPath $newPath -Raw
-    $updatedRenamedContent = $renamedContent
-    $renamedLines = @($renamedContent -split "\r?\n")
+    $updatedRenamedContent = Get-RenamedNoteContentWithUpdatedAliases -Path $newPath -Content $renamedContent -OldTitle $oldTitle -OldRelativePath $oldRelativePath -NewTitle $newDisplayTitle -NewRelativePath $newLinkTarget
+    $renamedLines = @($updatedRenamedContent -split "\r?\n")
     $headingUpdated = $false
     for ($i = 0; $i -lt $renamedLines.Count; $i++) {
         if ($renamedLines[$i] -match '^#\s+' -and (($renamedLines[$i] -replace '^#\s+', '').Trim() -eq $oldTitle)) {
-            $renamedLines[$i] = "# $newLeafName"
+            $renamedLines[$i] = "# $newDisplayTitle"
             $headingUpdated = $true
             break
         }
@@ -2400,11 +2593,11 @@ function Rename-Note {
         $updatedRenamedContent = ($renamedLines -join [Environment]::NewLine)
     }
     $updatedRenamedContent = Update-LinksInContent -Content $updatedRenamedContent -OldKeys $oldKeys -NewTarget $newLinkTarget
-    if ($updatedRenamedContent -cne $renamedContent) {
-        Set-Content -LiteralPath $newPath -Value $updatedRenamedContent -Encoding utf8
+    $pendingWrites += [pscustomobject]@{
+        Path            = $newPath
+        OriginalContent = $renamedContent
+        UpdatedContent  = $updatedRenamedContent
     }
-
-    Update-RenamedNoteAliases -Path $newPath -OldTitle $oldTitle -OldRelativePath $oldRelativePath -NewTitle $newLeafName -NewRelativePath $newLinkTarget
 
     Get-ChildItem -LiteralPath $Script:VaultRoot -Recurse -File -Filter "*.md" |
         Where-Object { $_.FullName -ne $newPath } |
@@ -2412,11 +2605,53 @@ function Rename-Note {
             $content = Get-Content -LiteralPath $_.FullName -Raw
             $updated = Update-LinksInContent -Content $content -OldKeys $oldKeys -NewTarget $newLinkTarget
             if ($updated -cne $content) {
-                Set-Content -LiteralPath $_.FullName -Value $updated -Encoding utf8
+                $pendingWrites += [pscustomobject]@{
+                    Path            = $_.FullName
+                    OriginalContent = $content
+                    UpdatedContent  = $updated
+                }
             }
         }
 
+    try {
+        foreach ($write in $pendingWrites) {
+            if ($write.UpdatedContent -cne $write.OriginalContent) {
+                Set-Content -LiteralPath $write.Path -Value $write.UpdatedContent -Encoding utf8
+            }
+        }
+    } catch {
+        $rollbackErrors = @()
+        foreach ($write in $pendingWrites) {
+            try {
+                if (Test-Path -LiteralPath $write.Path) {
+                    Set-Content -LiteralPath $write.Path -Value $write.OriginalContent -Encoding utf8
+                }
+            } catch {
+                $rollbackErrors += $write.Path
+            }
+        }
+
+        if ($movePerformed -and (Test-Path -LiteralPath $newPath) -and -not (Test-Path -LiteralPath $oldPath)) {
+            try {
+                Move-Item -LiteralPath $newPath -Destination $oldPath
+            } catch {
+                $rollbackErrors += $newPath
+            }
+        }
+
+        $message = "Rename failed after preparing file updates. Written files were rolled back and the original note path was preserved when possible. $($_.Exception.Message)"
+        if ($rollbackErrors.Count -gt 0) {
+            $message += " Rollback also failed for: $($rollbackErrors -join ', ')"
+        }
+
+        throw $message
+    }
+
+    Reset-MinimalNotesCaches
     Write-Output $newPath
+    if (-not $headingUpdated) {
+        Write-Output ("Warning: renamed note heading was not updated because no matching '# {0}' heading was found." -f $oldTitle)
+    }
 }
 
 function New-UnresolvedLinks {
@@ -2444,6 +2679,7 @@ function New-UnresolvedLinks {
         $created += $path
     }
 
+    Reset-MinimalNotesCaches
     $created | Sort-Object -Unique
 }
 
