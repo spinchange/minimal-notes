@@ -16,3 +16,5 @@ Desktop.ini
 # Test and temporary output
 TestResults/
 *.trx
+
+minimal-notes.config.json
